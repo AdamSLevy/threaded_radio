@@ -40,13 +40,15 @@ int main(){
     std::default_random_engine gen;
     std::uniform_real_distribution<float> dist(0.0,100.0);
 
-    for(int j = 0; j < 1; j++){
-    for(int i = 0; i < 2048; i++){
-        data.spec[i] = dist(gen);
+    for(int j = 0; j < 50; j++){
+        for(int i = 0; i < 2048; i++){
+            data.spec[i] = dist(gen);
+        }
+        int numBytes = radio.send((byte*)&data,sizeof(RadioData));
+        sleep(1);
+        //cout << sizeof(RadioData) << " " << numBytes << endl;
     }
-    int numBytes = radio.send((byte*)&data,sizeof(RadioData));
-    //cout << sizeof(RadioData) << " " << numBytes << endl;
-    }
+    cout << "done with sending" << endl;
     return 0;
 
     int total_bytes = 0;

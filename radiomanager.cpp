@@ -1,14 +1,14 @@
 #include "radiomanager.h"
 
-class msg_too_big: public exception
+class msg_too_big: public exception/*{{{*/
 {
 	virtual const char * what() const throw()
 	{
 		return "The data provided was too big.";
 	}
-} msg_too_big;
+} msg_too_big;/*}}}*/
 
-RadioManager::RadioManager(): HEADER(0xFAffFFfa), FOOTER(0xFeffFFfe)
+RadioManager::RadioManager(): HEADER(0xFAffFFfa), FOOTER(0xFeffFFfe)/*{{{*/
 {
     m_ttyPortName = "/dev/tty";
     m_ttyPortName += DEFAULT_TTY_PORT_NAME;
@@ -20,21 +20,25 @@ RadioManager::RadioManager(): HEADER(0xFAffFFfa), FOOTER(0xFeffFFfe)
     m_fd = -1;
 
     write_th = thread(&RadioManager::write_loop,this);
-    write_th.detach();
-}
+    //write_th.detach();
+}/*}}}*/
 
-RadioManager::~RadioManager(){
+RadioManager::~RadioManager()/*{{{*/
+{
     write_cv_mtx.lock();
     write_cv.notify_one();
     end_thread = true;
     write_cv_mtx.unlock();
+    write_th.join();
     closeSerial();
 
+
+    cout << "freeing mem" << endl;
     free(msg_buf);
     free(shared_buf);
-}
+}/*}}}*/
 
-int RadioManager::setUpSerial()
+int RadioManager::setUpSerial()/*{{{*/
 {
     // open the port
     m_fd = open(m_ttyPortName.c_str(), O_RDWR | O_NOCTTY );
@@ -89,9 +93,9 @@ int RadioManager::setUpSerial()
         cout << "flush issue" << endl;
     }
     return OPEN_SUCCESS;
-}
+}/*}}}*/
 
-int RadioManager::closeSerial()
+int RadioManager::closeSerial()/*{{{*/
 {
     //fsync(m_fd);
     // revert to old config settings
@@ -106,10 +110,12 @@ int RadioManager::closeSerial()
     }
 
     return exitCode;
-}
+}/*}}}*/
 
 #include <iomanip>
-void print_hex(byte * data, size_t len)
+#include <stdio.h>
+using std::printf;
+void print_hex(byte * data, size_t len)/*{{{*/
 {
     int perLine = 20;
     cout << "   0:  ";
@@ -136,39 +142,48 @@ void print_hex(byte * data, size_t len)
         }
     }
     cout << endl << endl;
-}
+}/*}}}*/
 
-void print_hex(byte bb)
+string to_hex(byte bb)/*{{{*/
 {
     byte hb = (bb&0xF0)>>4;
     byte lb = bb&0x0F;
-    char hc;
-    char lc;
+    string out = "00";
     if(hb>0x09){
-        hc = 'A' + (hb-0x0A);
+        out[0] = 'A' + (hb-0x0A);
     } else{
-        hc = '0' + hb;
+        out[0] = '0' + hb;
     }
     if(lb>0x09){
-        lc = 'A' + (lb-0x0A);
+        out[1] = 'A' + (lb-0x0A);
     } else{
-        lc = '0' + lb;
+        out[1] = '0' + lb;
     }
-    cout << hc << lc << " ";
-}
+    return out;
+}/*}}}*/
 
-int RadioManager::send(byte * data, const ulong numBytes)
+void print_pkt(Packet pkt){/*{{{*/
+    string out = "Packet\n\tmsgID: %s\n\tpktID: %s\n\tlen: %s\n\tptr: %X\n\tcrc: %s\n\n";
+    printf(out.c_str(),to_hex(pkt.msg).c_str(),to_hex(pkt.pkt).c_str(),to_hex(pkt.len).c_str(),pkt.ptr,pkt.crc.c_str());
+}/*}}}*/
+
+
+int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
 {
-    static byte msgID = 0;
+    static byte global_msgID = 0;/*{{{*/
+    byte msgID = global_msgID;
+    global_msgID++;
+    if(global_msgID > 0xFB)
+        global_msgID = 0;
     static byte * write_ptr = shared_buf;
     static byte * head_ptr = (byte*)&HEADER;
     static byte * foot_ptr = (byte*)&FOOTER;
     size_t sizeDataCompressed = (numBytes * 1.1) + 12;
     byte dataCompressed[sizeDataCompressed];
     int z_result = compress( dataCompressed, &sizeDataCompressed, data, numBytes);
-    int numSent = -1;
+    int numSent = -1;/*}}}*/
     if(Z_OK == z_result){
-        size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
+        size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;/*{{{*/
         size_t numTotalBytesForPkts = HEAD_PKT_SIZE + numPkts * MAX_PKT_SIZE - PKT_DATA_SIZE
                                      + sizeDataCompressed - (numPkts - 1)*PKT_DATA_SIZE;
         if(numTotalBytesForPkts > MSG_BUF_SIZE)
@@ -181,12 +196,10 @@ int RadioManager::send(byte * data, const ulong numBytes)
         size_t remBytesInSharedBuf = SHARED_BUF_SIZE - (write_ptr - shared_buf);
 
         // reset write_ptr if there isn't enough room for the pkts
-        if(numTotalBytesForPkts > remBytesInSharedBuf){
-            cout << "write_ptr_loop" << endl;
-            write_ptr = shared_buf;
-        }
+        if(numTotalBytesForPkts > remBytesInSharedBuf)
+            write_ptr = shared_buf;/*}}}*/
 
-        // HEAD PKT
+        // HEAD PKT/*{{{*/
         // HEADER
         for(int i = 0; i < HEADER_SIZE; i++)
             msg_ptr[i]=head_ptr[i];
@@ -218,15 +231,15 @@ int RadioManager::send(byte * data, const ulong numBytes)
         pkt_to_send[pktID].pkt = pktID;
         pkt_to_send[pktID].len = HEAD_PKT_SIZE;
         pkt_to_send[pktID].ptr = write_ptr;
+        pkt_to_send[pktID].crc = m_crc.getHash();
 
+        //print_pkt(pkt_to_send[pktID]);/*}}}*/
 
-        for(pktID = 1; pktID < numPkts+1; pktID++){
+        for(pktID = 1; pktID < numPkts+1; pktID++){/*{{{*/
             int len = PKT_DATA_SIZE;
-            if(bytesRemaining < PKT_DATA_SIZE){
+            if(bytesRemaining < PKT_DATA_SIZE)
                 len = bytesRemaining;
-                cout << "bytesRemaining < pkt_da " << len << endl;
-                print_hex(pktID);
-            }
+            
             bytesRemaining -= len;
 
             // HEADER
@@ -249,51 +262,56 @@ int RadioManager::send(byte * data, const ulong numBytes)
             for(int i = 0; i < FOOTER_SIZE; i++)
                 msg_ptr[FOOTER_OFFSET(len) + i]=foot_ptr[i];
 
+            byte pkt_len = MAX_PKT_SIZE - PKT_DATA_SIZE + len;
 
             pkt_to_send[pktID].msg = msgID;
             pkt_to_send[pktID].pkt = pktID;
-            pkt_to_send[pktID].len = MAX_PKT_SIZE - PKT_DATA_SIZE + len;
-            pkt_to_send[pktID].ptr = msg_ptr;
+            pkt_to_send[pktID].len = pkt_len;
+            pkt_to_send[pktID].ptr = pkt_to_send[pktID-1].ptr + pkt_to_send[pktID-1].len; //write_ptr + (pktID-1) * pkt_len + HEAD_PKT_SIZE;
+            pkt_to_send[pktID].crc = m_crc.getHash();
+
+            //print_pkt(pkt_to_send[pktID]);
             //cout << m_crc.getHash() << endl;
             //print_hex(msg_ptr, MAX_PKT_SIZE - PKT_DATA_SIZE + len);
             msg_ptr += MAX_PKT_SIZE;
-        }
-        msgID++;
-        if(msgID > 0xFB)
-            msgID = 0;
+        }/*}}}*/
 
         // copy pkts to shared mem
-        shared_mem_mtx.lock();
+        shared_mem_mtx.lock();      // MUTEX LOCK
+        cout << "send: " << endl;
+
         memcpy(write_ptr, msg_buf, numTotalBytesForPkts);
-        for(pktID = 0; pktID < numPkts+1; pktID++){
-            send_q.push_back(pkt_to_send[pktID]);
-
-            cout << "Msg: ";
-            print_hex(pkt_to_send[pktID].msg);
-            cout << " Packet: ";
-            print_hex(pkt_to_send[pktID].pkt);
-            cout << " len: ";
-            print_hex(pkt_to_send[pktID].len);
-            cout << endl;
-        }
-
-        //if(write_cv_mtx.try_lock()){
-        //    write_cv.notify_one();
-        //    write_cv_mtx.unlock();
-        //}
-
-        shared_mem_mtx.unlock();
-
         //print_hex(write_ptr, numTotalBytesForPkts);
         write_ptr += numTotalBytesForPkts;
+        cout << "msgID: " << to_hex(msgID) << " adding pkts... " << endl;
+        for(pktID = 0; pktID < numPkts+1; pktID++){
+            send_q.push_back(pkt_to_send[pktID]);
+            //print_pkt(pkt_to_send[pktID]);
+            cout << to_hex(pktID) << "  ";
+            if((pktID+1) % 20 == 0)
+                cout << endl;
+        }
+        cout << endl;
+        cout << "\tnumPkts: " << (int)numPkts+1<< endl << endl << endl;
+
+        shared_mem_mtx.unlock();    // MUTEX UNLOCK
+
+        if(write_cv_mtx.try_lock()){
+            cout << "notifying ... " << endl;
+            write_cv.notify_one();
+            write_cv_mtx.unlock();
+        } else{
+            cout << " send could not unlock" << endl;
+        }
+
         delete [] pkt_to_send;
 
         numSent = numTotalBytesForPkts;
     }
     return numSent;
-}
+}/*}}}*/
 
-int RadioManager::sendCompressed(byte * data, const ulong numBytes)
+int RadioManager::sendCompressed(byte * data, const ulong numBytes)/*{{{*/
 {
     ulong sizeDataCompressed = (numBytes * 1.1) + 12;
     byte dataCompressed[sizeDataCompressed];
@@ -331,88 +349,69 @@ int RadioManager::sendCompressed(byte * data, const ulong numBytes)
         }
     }
     return numSent;
-}
+}/*}}}*/
 
-void RadioManager::write_loop()
+void RadioManager::write_loop()/*{{{*/
 {
     deque<Packet> out_q;
     byte * out_buf = (byte *) calloc(MAX_PKTS_WRITE_LOOP*MAX_PKT_SIZE,sizeof(byte));
 
     unique_lock<mutex> lck(write_cv_mtx);
-    while(true){
-        while(send_q.empty() && out_q.empty()){
-            /*
-            cout << "before write_cv.wait" << endl;
-            sleep(1);
-            //cout << "try lock... ";
-            //if(lck.try_lock()){
-            //    cout << "wasn't locked, now is" << endl;
-            //} else{
-            //    cout << "is locked " << endl;
-            //}
-            write_cv.wait(lck);
-            if(end_thread){
-                cout << "goodbye" << endl;
-                free(out_buf);
-                return;
-            }
-            */
-            //cout << "empty..." << endl;
-            sleep(4);
-        }
+    while(!end_thread || !out_q.empty() || !send_q.empty()){
+        bool waited = false;
 
+        shared_mem_mtx.lock();  // MUTEX LOCK
+        cout << "write_loop" << endl;
+        if(waited)
+            cout << "\tnotified to wake up" << endl;
+
+        // add packets to out_p
         int num_pkts_added = 0;
-        //cout << "qing Packet's" << endl;
-        while(out_q.size() < MAX_PKTS_WRITE_LOOP && !send_q.empty()){
+        while(out_q.size() < MAX_PKTS_WRITE_LOOP && num_pkts_added < send_q.size()){
             Packet pkt = send_q[num_pkts_added++];
+            cout << "populating out_p: " << endl;
+            print_pkt(pkt);
             out_q.push_back(pkt);
         }
         byte * out_ptr = out_buf;
 
-        //cout << "acquiring mutex... ";
-        shared_mem_mtx.lock();  // MUTEX LOCK
-        cout << " mutex acquired" << endl;
 
-        cout << "erase send_q... ";
         send_q.erase(send_q.begin(),send_q.begin()+num_pkts_added);
-        cout << " done" << endl;
 
-        cout << "memcpy pkts... " << endl;
         for(int p = 0; p < out_q.size(); p++){
-            cout << p << " ";
             Packet pkt = out_q[p];
+            if(pkt.ptr == 0){
+                print_pkt(pkt);
+                cout << "PTR NULL" << endl;
+            }
+
             if(pkt.ptr[ID_OFFSET] == pkt.msg && pkt.ptr[ID_OFFSET+1] == pkt.pkt && // verify memory is still good
                     pkt.ptr[0] == ((byte*)&HEADER)[0] && pkt.ptr[1] == ((byte*)&HEADER)[1] && 
                     pkt.ptr[2] == ((byte*)&HEADER)[2] && pkt.ptr[1] == ((byte*)&HEADER)[2]){
 
-                cout << "Msg: ";
-                print_hex(pkt.msg);
-                cout << " Packet: ";
-                print_hex(pkt.pkt);
-                cout << " len: ";
-                print_hex(pkt.len);
-                cout << endl;
 
                 memcpy(out_ptr,pkt.ptr,pkt.len);
                 out_ptr += pkt.len;
                 out_q[p].send_count--;
             } else{
                 out_q[p].send_count=0;
+                cout << "mem bad" << endl;
+                print_pkt(pkt);
+                print_hex(pkt.ptr, pkt.len);
             }
-        void* ptr = &out_ptr;
-        print_hex((byte*)ptr,sizeof(out_ptr));
-        ptr = &out_buf;
-        print_hex((byte*)ptr,sizeof(out_buf));
         }
-        cout << " done" << endl;
 
         print_hex(out_buf, out_ptr - out_buf);
+
+        cout << endl << endl;
+
         shared_mem_mtx.unlock(); // MUTEX UNLOCK
-        cout << "mutex released" << endl;
 
         // write the data
-        cout << (out_ptr - out_buf) << endl;
-        print_hex(out_buf, out_ptr - out_buf);
         out_q.clear();
+        while(send_q.empty() && out_q.empty() && !end_thread) 
+        {waited = true; cout << "cv locked\n";write_cv.wait(lck); cout << " cv unlocked" << endl;}
     }
-}
+    cout << "exiting the thread, free out buf" << endl;
+    free(out_buf);
+}/*}}}*/

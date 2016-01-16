@@ -50,7 +50,7 @@ typedef unsigned char byte;
 #define HEAD_PKT_SIZE (HEADER_SIZE + ID_SIZE + 1 + CRC_SIZE + CRC_SIZE + FOOTER_SIZE)
 
 #define MSG_BUF_SIZE    (4096*3)    // 12288 bytes, up to 86 packets
-#define SHARED_BUF_SIZE (4096*12)   // 49152 bytes, 346 packets of size 142bytes, 4.9 messages at 70 packets per msg, 
+#define SHARED_BUF_SIZE (4096*12*2)   // 49152 bytes, 346 packets of size 142bytes, 4.9 messages at 70 packets per msg, 
 
 // for standard packet with full data
 #define ID_OFFSET       HEADER_SIZE
@@ -61,7 +61,7 @@ typedef unsigned char byte;
 #define MAX_PKTS_SHARED_BUF (SHARED_BUF_SIZE / MAX_PKT_SIZE)
 #define MAX_PKTS_MSG_BUF (MSG_BUF_SIZE / MAX_PKT_SIZE)
 
-#define MAX_PKTS_WRITE_LOOP 30
+#define MAX_PKTS_WRITE_LOOP 20
 #define MAX_NUM_ATTEMPTS 3
 #define NUM_BYTES_WRITE_CALL 128
 
@@ -71,6 +71,7 @@ struct Packet{
     byte len = 0;
     byte send_count = MAX_NUM_ATTEMPTS;
     byte * ptr = NULL;
+    string crc;
 };
 
 class RadioManager
