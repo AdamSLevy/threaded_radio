@@ -1,20 +1,17 @@
 #include "radiomanager.h"
 
-class msg_too_big: public exception/*{{{*/
+class write_err: public exception/*{{{*/
 {
 	virtual const char * what() const throw()
 	{
-		return "The data provided was too big.";
+		return "A write error occurred.";
 	}
-} msg_too_big;/*}}}*/
+} write_err;/*}}}*/
 
 RadioManager::RadioManager(): HEADER(0xFAffFFfa), FOOTER(0xFeffFFfe)/*{{{*/
 {
     m_ttyPortName = "/dev/tty";
     m_ttyPortName += DEFAULT_TTY_PORT_NAME;
-
-    msg_buf = (byte *) calloc(MSG_BUF_SIZE,sizeof(byte));
-    shared_buf = (byte *) calloc(SHARED_BUF_SIZE,sizeof(byte));
 
     end_thread = false;
     m_fd = -1;
@@ -31,11 +28,6 @@ RadioManager::~RadioManager()/*{{{*/
     write_cv_mtx.unlock();
     write_th.join();
     closeSerial();
-
-
-    cout << "freeing mem" << endl;
-    free(msg_buf);
-    free(shared_buf);
 }/*}}}*/
 
 int RadioManager::setUpSerial()/*{{{*/
@@ -163,21 +155,20 @@ string to_hex(byte bb)/*{{{*/
 }/*}}}*/
 
 void print_pkt(Packet pkt){/*{{{*/
-    string out = "Packet\n\tmsgID: %s\n\tpktID: %s\n\tlen: %s\n\tptr: %X\n\tcrc: %s\n\n";
-    printf(out.c_str(),to_hex(pkt.msg).c_str(),to_hex(pkt.pkt).c_str(),to_hex(pkt.len).c_str(),pkt.ptr,pkt.crc.c_str());
+    string out = "Packet\n\tmsgID: %s\n\tpktID: %s\n\tlen: ";
+    printf(out.c_str(),to_hex(pkt.data[ID_OFFSET]).c_str(),to_hex(pkt.data[ID_OFFSET+1]).c_str(),to_hex(pkt.len).c_str());
+    print_hex(pkt.data,pkt.len);
 }/*}}}*/
 
 
 int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
 {
-    static byte global_msgID = 0;/*{{{*/
-    byte msgID = global_msgID;
-    global_msgID++;
-    if(global_msgID > 0xFB)
-        global_msgID = 0;
-    static byte * write_ptr = shared_buf;
-    static byte * head_ptr = (byte*)&HEADER;
-    static byte * foot_ptr = (byte*)&FOOTER;
+    static byte msgID = 0;/*{{{*/
+    static byte * foot_ptr = (byte *)(&FOOTER);
+    
+    if(msgID > 0xFB)
+        msgID = 0;
+
     size_t sizeDataCompressed = (numBytes * 1.1) + 12;
     byte dataCompressed[sizeDataCompressed];
     int z_result = compress( dataCompressed, &sizeDataCompressed, data, numBytes);
@@ -186,127 +177,76 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;/*{{{*/
         size_t numTotalBytesForPkts = HEAD_PKT_SIZE + numPkts * MAX_PKT_SIZE - PKT_DATA_SIZE
                                      + sizeDataCompressed - (numPkts - 1)*PKT_DATA_SIZE;
-        if(numTotalBytesForPkts > MSG_BUF_SIZE)
-            throw msg_too_big;
+        
         size_t bytesRemaining = sizeDataCompressed;
         byte pktID = 0;
-        byte * msg_ptr = msg_buf;
         Packet * pkt_to_send = new Packet[numPkts+1];
 
-        size_t remBytesInSharedBuf = SHARED_BUF_SIZE - (write_ptr - shared_buf);
-
-        // reset write_ptr if there isn't enough room for the pkts
-        if(numTotalBytesForPkts > remBytesInSharedBuf)
-            write_ptr = shared_buf;/*}}}*/
-
         // HEAD PKT/*{{{*/
-        // HEADER
-        for(int i = 0; i < HEADER_SIZE; i++)
-            msg_ptr[i]=head_ptr[i];
+        byte * pkt_data = pkt_to_send[0].data;
 
         // ID
-        msg_ptr[ID_OFFSET]=msgID;
-        msg_ptr[ID_OFFSET+1]=pktID;
+        pkt_data[ID_OFFSET]=msgID;
+        pkt_data[ID_OFFSET+1]=pktID;
 
         // DATA: number of packets and compressed data crc
-        msg_ptr[PKT_DATA_OFFSET]=(byte)numPkts;
+        pkt_data[PKT_DATA_OFFSET]=(byte)numPkts;
         m_crc.reset();
         m_crc.add(dataCompressed,sizeDataCompressed);
-        m_crc.getHash(msg_ptr+PKT_DATA_OFFSET+1);
+        m_crc.getHash(pkt_data+PKT_DATA_OFFSET+1);
 
         // PKT CRC
         m_crc.reset();
-        m_crc.add(msg_ptr+ID_OFFSET,ID_SIZE + 1 + CRC_SIZE);
-        m_crc.getHash(msg_ptr+CRC_OFFSET(1+CRC_SIZE));
+        m_crc.add(pkt_data+ID_OFFSET,ID_SIZE + 1 + CRC_SIZE);
+        m_crc.getHash(pkt_data+CRC_OFFSET(1+CRC_SIZE));
 
-        // FOOTER
-        for(int i = 0; i < FOOTER_SIZE; i++)
-            msg_ptr[FOOTER_OFFSET(1+CRC_SIZE) + i ]=foot_ptr[i];
-
-        //cout << m_crc.getHash() << endl;
-        //print_hex(msg_ptr, HEAD_PKT_SIZE);
-        msg_ptr += HEAD_PKT_SIZE;
-
-        pkt_to_send[pktID].msg = msgID;
-        pkt_to_send[pktID].pkt = pktID;
         pkt_to_send[pktID].len = HEAD_PKT_SIZE;
-        pkt_to_send[pktID].ptr = write_ptr;
-        pkt_to_send[pktID].crc = m_crc.getHash();
-
-        //print_pkt(pkt_to_send[pktID]);/*}}}*/
 
         for(pktID = 1; pktID < numPkts+1; pktID++){/*{{{*/
-            int len = PKT_DATA_SIZE;
+            int data_len = PKT_DATA_SIZE;
             if(bytesRemaining < PKT_DATA_SIZE)
-                len = bytesRemaining;
+                data_len = bytesRemaining;
             
-            bytesRemaining -= len;
+            bytesRemaining -= data_len;
 
-            // HEADER
-            for(int i = 0; i < HEADER_SIZE; i++)
-                msg_ptr[i]=head_ptr[i];
+            pkt_data = pkt_to_send[pktID].data;
+            byte pkt_len = MAX_PKT_SIZE - PKT_DATA_SIZE + data_len;
+            pkt_to_send[pktID].len = pkt_len;
 
             // ID
-            msg_ptr[ID_OFFSET]=msgID;
-            msg_ptr[ID_OFFSET+1]=pktID;
+            pkt_data[ID_OFFSET]=msgID;
+            pkt_data[ID_OFFSET+1]=pktID;
 
             // DATA
-            memcpy(msg_ptr+PKT_DATA_OFFSET,dataCompressed+(pktID-1)*PKT_DATA_SIZE, len);
+            memcpy(pkt_data+PKT_DATA_OFFSET,dataCompressed+(pktID-1)*PKT_DATA_SIZE, pkt_len);
 
             // PKT CRC
             m_crc.reset();
-            m_crc.add(msg_ptr+ID_OFFSET,len+ID_SIZE);
-            m_crc.getHash(msg_ptr+CRC_OFFSET(len));
+            m_crc.add(pkt_data+ID_OFFSET,data_len+ID_SIZE);
+            m_crc.getHash(pkt_data+CRC_OFFSET(data_len));
 
             // FOOTER
-            for(int i = 0; i < FOOTER_SIZE; i++)
-                msg_ptr[FOOTER_OFFSET(len) + i]=foot_ptr[i];
-
-            byte pkt_len = MAX_PKT_SIZE - PKT_DATA_SIZE + len;
-
-            pkt_to_send[pktID].msg = msgID;
-            pkt_to_send[pktID].pkt = pktID;
-            pkt_to_send[pktID].len = pkt_len;
-            pkt_to_send[pktID].ptr = pkt_to_send[pktID-1].ptr + pkt_to_send[pktID-1].len; //write_ptr + (pktID-1) * pkt_len + HEAD_PKT_SIZE;
-            pkt_to_send[pktID].crc = m_crc.getHash();
-
-            //print_pkt(pkt_to_send[pktID]);
-            //cout << m_crc.getHash() << endl;
-            //print_hex(msg_ptr, MAX_PKT_SIZE - PKT_DATA_SIZE + len);
-            msg_ptr += MAX_PKT_SIZE;
+            if(data_len < PKT_DATA_SIZE){
+                for(int i = 0; i < FOOTER_SIZE; i++)
+                    pkt_data[FOOTER_OFFSET(data_len) + i]=foot_ptr[i];
+            }
         }/*}}}*/
 
         // copy pkts to shared mem
         shared_mem_mtx.lock();      // MUTEX LOCK
-        cout << "send: " << endl;
-
-        memcpy(write_ptr, msg_buf, numTotalBytesForPkts);
-        //print_hex(write_ptr, numTotalBytesForPkts);
-        write_ptr += numTotalBytesForPkts;
-        cout << "msgID: " << to_hex(msgID) << " adding pkts... " << endl;
         for(pktID = 0; pktID < numPkts+1; pktID++){
-            send_q.push_back(pkt_to_send[pktID]);
-            //print_pkt(pkt_to_send[pktID]);
-            cout << to_hex(pktID) << "  ";
-            if((pktID+1) % 20 == 0)
-                cout << endl;
+            to_send.push_back(pkt_to_send[pktID]);
         }
-        cout << endl;
-        cout << "\tnumPkts: " << (int)numPkts+1<< endl << endl << endl;
-
         shared_mem_mtx.unlock();    // MUTEX UNLOCK
 
         if(write_cv_mtx.try_lock()){
-            cout << "notifying ... " << endl;
             write_cv.notify_one();
             write_cv_mtx.unlock();
-        } else{
-            cout << " send could not unlock" << endl;
         }
 
         delete [] pkt_to_send;
-
         numSent = numTotalBytesForPkts;
+        msgID++;
     }
     return numSent;
 }/*}}}*/
@@ -353,65 +293,53 @@ int RadioManager::sendCompressed(byte * data, const ulong numBytes)/*{{{*/
 
 void RadioManager::write_loop()/*{{{*/
 {
-    deque<Packet> out_q;
-    byte * out_buf = (byte *) calloc(MAX_PKTS_WRITE_LOOP*MAX_PKT_SIZE,sizeof(byte));
-
+    byte * window_buf = (byte *) calloc(MAX_PKTS_WRITE_LOOP*MAX_PKT_SIZE,sizeof(byte));
     unique_lock<mutex> lck(write_cv_mtx);
-    while(!end_thread || !out_q.empty() || !send_q.empty()){
-        bool waited = false;
+    while(!end_thread || !send_window.empty() || !to_send.empty()){
+        // add packets to send_window, until full or to_send is empty
+        int num_pkts_added = 0;
+        while(send_window.size() < MAX_PKTS_WRITE_LOOP && num_pkts_added < to_send.size()){
+            Packet pkt = to_send[num_pkts_added++];
+            send_window.push_back(pkt);
+        }
 
         shared_mem_mtx.lock();  // MUTEX LOCK
-        cout << "write_loop" << endl;
-        if(waited)
-            cout << "\tnotified to wake up" << endl;
-
-        // add packets to out_p
-        int num_pkts_added = 0;
-        while(out_q.size() < MAX_PKTS_WRITE_LOOP && num_pkts_added < send_q.size()){
-            Packet pkt = send_q[num_pkts_added++];
-            cout << "populating out_p: " << endl;
-            print_pkt(pkt);
-            out_q.push_back(pkt);
+        // from to_send, remove the packets that were added to send_window
+        to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
+        // write the packet data to the window buffer
+        byte * window_ptr = window_buf;
+        for(auto pkt_iter = send_window.begin(); pkt_iter != send_window.end(); pkt_iter++){
+            pkt_iter->send_count--;
+            memcpy(window_ptr,pkt_iter->data,pkt_iter->len);
+            window_ptr += pkt_iter->len;
         }
-        byte * out_ptr = out_buf;
-
-
-        send_q.erase(send_q.begin(),send_q.begin()+num_pkts_added);
-
-        for(int p = 0; p < out_q.size(); p++){
-            Packet pkt = out_q[p];
-            if(pkt.ptr == 0){
-                print_pkt(pkt);
-                cout << "PTR NULL" << endl;
-            }
-
-            if(pkt.ptr[ID_OFFSET] == pkt.msg && pkt.ptr[ID_OFFSET+1] == pkt.pkt && // verify memory is still good
-                    pkt.ptr[0] == ((byte*)&HEADER)[0] && pkt.ptr[1] == ((byte*)&HEADER)[1] && 
-                    pkt.ptr[2] == ((byte*)&HEADER)[2] && pkt.ptr[1] == ((byte*)&HEADER)[2]){
-
-
-                memcpy(out_ptr,pkt.ptr,pkt.len);
-                out_ptr += pkt.len;
-                out_q[p].send_count--;
-            } else{
-                out_q[p].send_count=0;
-                cout << "mem bad" << endl;
-                print_pkt(pkt);
-                print_hex(pkt.ptr, pkt.len);
-            }
-        }
-
-        print_hex(out_buf, out_ptr - out_buf);
-
-        cout << endl << endl;
-
+        print_hex(window_buf, window_ptr - window_buf);
         shared_mem_mtx.unlock(); // MUTEX UNLOCK
 
         // write the data
-        out_q.clear();
-        while(send_q.empty() && out_q.empty() && !end_thread) 
-        {waited = true; cout << "cv locked\n";write_cv.wait(lck); cout << " cv unlocked" << endl;}
+        //size_t num_bytes_to_send = window_ptr - window_buf;
+        //window_ptr = window_buf;
+        //while(num_bytes_to_send > 0){
+        //    int num_bytes_sent = write(m_fd,window_ptr,num_bytes_to_send);
+        //    if(num_bytes_sent < 0){
+        //        throw write_err;
+        //    }
+        //    num_bytes_to_send -= num_bytes_sent;
+        //    window_ptr += num_bytes_sent;
+        //}
+
+
+        // get ACK
+
+        // parse ACK
+        
+        // populate send_window
+        send_window.clear();
+
+        // if nothing to send, wait until notify
+        while(to_send.empty() && send_window.empty() && !end_thread) 
+            write_cv.wait(lck);
     }
-    cout << "exiting the thread, free out buf" << endl;
-    free(out_buf);
+    cout << "exiting the thread, free window buf" << endl;
+    free(window_buf);
 }/*}}}*/

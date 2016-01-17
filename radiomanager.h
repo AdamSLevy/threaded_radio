@@ -21,7 +21,7 @@
 #include <errno.h>
 #include "zlib.h" // compression lib
 #include "crc32.h"
-#include <deque>
+#include <vector>
 #include <mutex>
 #include <thread>
 #include <condition_variable>
@@ -33,7 +33,7 @@ using std::mutex;
 using std::thread;
 using std::unique_lock;
 using std::condition_variable;
-using std::deque;
+using std::vector;
 using std::string;
 using std::exception;
 
@@ -49,8 +49,8 @@ typedef unsigned char byte;
 #define MAX_PKT_SIZE (HEADER_SIZE + ID_SIZE + PKT_DATA_SIZE + CRC_SIZE + FOOTER_SIZE)
 #define HEAD_PKT_SIZE (HEADER_SIZE + ID_SIZE + 1 + CRC_SIZE + CRC_SIZE + FOOTER_SIZE)
 
-#define MSG_BUF_SIZE    (4096*3)    // 12288 bytes, up to 86 packets
-#define SHARED_BUF_SIZE (4096*12*2)   // 49152 bytes, 346 packets of size 142bytes, 4.9 messages at 70 packets per msg, 
+//#define MSG_BUF_SIZE    (4096*3)    // 12288 bytes, up to 86 packets
+//#define SHARED_BUF_SIZE (4096*12*2)   // 49152 bytes, 346 packets of size 142bytes, 4.9 messages at 70 packets per msg, 
 
 // for standard packet with full data
 #define ID_OFFSET       HEADER_SIZE
@@ -58,20 +58,24 @@ typedef unsigned char byte;
 #define CRC_OFFSET(data_len)      (PKT_DATA_OFFSET+data_len)
 #define FOOTER_OFFSET(data_len)   (CRC_OFFSET(data_len)+CRC_SIZE)
 
-#define MAX_PKTS_SHARED_BUF (SHARED_BUF_SIZE / MAX_PKT_SIZE)
-#define MAX_PKTS_MSG_BUF (MSG_BUF_SIZE / MAX_PKT_SIZE)
+//#define MAX_PKTS_SHARED_BUF (SHARED_BUF_SIZE / MAX_PKT_SIZE)
+//#define MAX_PKTS_MSG_BUF (MSG_BUF_SIZE / MAX_PKT_SIZE)
 
 #define MAX_PKTS_WRITE_LOOP 20
 #define MAX_NUM_ATTEMPTS 3
 #define NUM_BYTES_WRITE_CALL 128
 
 struct Packet{
-    byte msg = 0;
-    byte pkt = 0;
-    byte len = 0;
+    byte len = MAX_PKT_SIZE;
     byte send_count = MAX_NUM_ATTEMPTS;
-    byte * ptr = NULL;
-    string crc;
+    byte data[MAX_PKT_SIZE]={0xFA,0xFF,0xFF,0xFA,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFE,0xFF,0xFF,0xFE,
+                              0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                              0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                              0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                              0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                              0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                              0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                              0x00,0x00,0x00,0x00,0x00,0xFE,0xFF,0xFF,0xFE};
 };
 
 class RadioManager
@@ -94,10 +98,9 @@ private:
     const ulong HEADER;
     const ulong FOOTER;
 
-    byte * shared_buf;
-    byte * msg_buf;
+    vector<Packet> to_send;
 
-    deque<Packet> send_q;
+    vector<Packet> send_window;
 
     // mutexes
     mutex shared_mem_mtx;   // shared memory mutex
