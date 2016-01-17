@@ -360,22 +360,22 @@ void RadioManager::write_loop()/*{{{*/
     while(!end_thread || !out_q.empty() || !send_q.empty()){
         bool waited = false;
 
-        shared_mem_mtx.lock();  // MUTEX LOCK
-        cout << "write_loop" << endl;
-        if(waited)
-            cout << "\tnotified to wake up" << endl;
+        //cout << "write_loop" << endl;
+        //if(waited)
+            //cout << "\tnotified to wake up" << endl;
 
         // add packets to out_p
         int num_pkts_added = 0;
         while(out_q.size() < MAX_PKTS_WRITE_LOOP && num_pkts_added < send_q.size()){
             Packet pkt = send_q[num_pkts_added++];
-            cout << "populating out_p: " << endl;
-            print_pkt(pkt);
+            //cout << "populating out_p: " << endl;
+            //print_pkt(pkt);
             out_q.push_back(pkt);
         }
         byte * out_ptr = out_buf;
 
 
+        shared_mem_mtx.lock();  // MUTEX LOCK
         send_q.erase(send_q.begin(),send_q.begin()+num_pkts_added);
 
         for(int p = 0; p < out_q.size(); p++){
