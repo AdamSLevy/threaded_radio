@@ -40,23 +40,14 @@ int main(){
     std::default_random_engine gen;
     std::uniform_real_distribution<float> dist(0.0,100.0);
 
-    for(int j = 0; j < 1; j++){
-        for(int i = 0; i < 2048; i++){
-            data.spec[i] = dist(gen);
-        }
-        int numBytes = radio.send((byte*)&data,sizeof(RadioData));
-        sleep(1);
-        //cout << sizeof(RadioData) << " " << numBytes << endl;
-    }
-    cout << "done with sending" << endl;
-    return 0;
-
     int total_bytes = 0;
-    int errorCode = radio.setUpSerial();
-    cout << "Serial setup code: " << errorCode << endl << endl;
+    int errorCode = -1;
 
-    while(errorCode != 0){
 START:
+    cout << "hello" << endl;
+    errorCode = radio.setUpSerial();
+    cout << "Serial setup code: " << errorCode << endl << endl;
+    while(errorCode != 0){
         char in;
         bool valid = false;
         while(!valid){
@@ -88,28 +79,29 @@ START:
 //            data.spec[i] = dist(gen);
 //        }
         //data.fileNum++;
-        int numBytes = radio.sendCompressed((byte*)&data,sizeof(RadioData));
+        int numBytes = radio.send((byte*)&data,sizeof(RadioData));
 
         if(numBytes>0){
             total_bytes += numBytes;
-            cout << "Sent: " << numBytes << endl;
-            cout << "Total: " << total_bytes << endl;
-            cout << "\t wait ";
+            //cout << "Sent: " << numBytes << endl;
+            //cout << "Total: " << total_bytes << endl;
+            //cout << "\t wait ";
 
             for(int i = 0; i > 0; i--){
-                cout << i << " ";
-                cout.flush();
-                sleep(1);
+                //cout << i << " ";
+                //cout.flush();
+                //sleep(1);
             }
             cout << endl << endl;
         } else{
             cout << "Failed to send! \n";
+            errorCode = radio.closeSerial();
             goto START; // im a bad boy, but it works
         }
 
-        if(total_bytes > 55000){
-            cout << "Total Sent: " << total_bytes << endl;
-            //sleep(5);
+        if(total_bytes > 10000){
+            //cout << "Total Sent: " << total_bytes << endl;
+            sleep(5);
             return 0;
         }
     }

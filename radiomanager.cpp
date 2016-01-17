@@ -10,14 +10,15 @@ class write_err: public exception/*{{{*/
 
 RadioManager::RadioManager(): HEADER(0xFAffFFfa), FOOTER(0xFeffFFfe)/*{{{*/
 {
-    m_ttyPortName = "/dev/tty";
+    //m_ttyPortName = "/dev/tty";
+    m_ttyPortName = "/dev/cu";
     m_ttyPortName += DEFAULT_TTY_PORT_NAME;
 
     end_thread = false;
+    is_open = false;
     m_fd = -1;
+    num_pkts = 0;
 
-    write_th = thread(&RadioManager::write_loop,this);
-    //write_th.detach();
 }/*}}}*/
 
 RadioManager::~RadioManager()/*{{{*/
@@ -26,14 +27,15 @@ RadioManager::~RadioManager()/*{{{*/
     write_cv.notify_one();
     end_thread = true;
     write_cv_mtx.unlock();
-    write_th.join();
     closeSerial();
+    cout << " num pkts: " << num_pkts << endl;
 }/*}}}*/
 
 int RadioManager::setUpSerial()/*{{{*/
 {
     // open the port
     m_fd = open(m_ttyPortName.c_str(), O_RDWR | O_NOCTTY );
+    cout << "after open" << endl;
 
     if(m_fd < 0){
         return OPEN_FAIL;
@@ -84,6 +86,11 @@ int RadioManager::setUpSerial()/*{{{*/
     if(tcflush(m_fd, TCIOFLUSH) != 0 ){
         cout << "flush issue" << endl;
     }
+
+    is_open = true;
+
+    write_th = thread(&RadioManager::write_loop,this);
+    write_th.detach();
     return OPEN_SUCCESS;
 }/*}}}*/
 
@@ -92,13 +99,16 @@ int RadioManager::closeSerial()/*{{{*/
     //fsync(m_fd);
     // revert to old config settings
     int exitCode = 0;
-    if(m_fd != -1){
+    if(m_fd != -1 && is_open){
         if(tcsetattr(m_fd,TCSAFLUSH, &m_oldConfig) < 0){
             exitCode |= CONFIG_APPLY_FAIL;
         }
         if(close(m_fd) < 0){
             exitCode |= CLOSE_FAIL;
         }
+        is_open = false;
+        m_fd = -1;
+        //write_th.join();
     }
 
     return exitCode;
@@ -155,7 +165,7 @@ string to_hex(byte bb)/*{{{*/
 }/*}}}*/
 
 void print_pkt(Packet pkt){/*{{{*/
-    string out = "Packet\n\tmsgID: %s\n\tpktID: %s\n\tlen: ";
+    string out = "Packet\n\tmsgID: %s\n\tpktID: %s\n\tlen: \n";
     printf(out.c_str(),to_hex(pkt.data[ID_OFFSET]).c_str(),to_hex(pkt.data[ID_OFFSET+1]).c_str(),to_hex(pkt.len).c_str());
     print_hex(pkt.data,pkt.len);
 }/*}}}*/
@@ -166,13 +176,16 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     static byte msgID = 0;/*{{{*/
     static byte * foot_ptr = (byte *)(&FOOTER);
     
+    int numSent = -1;
+    if(!is_open)
+        return numSent;
     if(msgID > 0xFB)
         msgID = 0;
 
     size_t sizeDataCompressed = (numBytes * 1.1) + 12;
     byte dataCompressed[sizeDataCompressed];
     int z_result = compress( dataCompressed, &sizeDataCompressed, data, numBytes);
-    int numSent = -1;/*}}}*/
+    /*}}}*/
     if(Z_OK == z_result){
         size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;/*{{{*/
         size_t numTotalBytesForPkts = HEAD_PKT_SIZE + numPkts * MAX_PKT_SIZE - PKT_DATA_SIZE
@@ -218,7 +231,7 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
             pkt_data[ID_OFFSET+1]=pktID;
 
             // DATA
-            memcpy(pkt_data+PKT_DATA_OFFSET,dataCompressed+(pktID-1)*PKT_DATA_SIZE, pkt_len);
+            memcpy(pkt_data+PKT_DATA_OFFSET,dataCompressed+(pktID-1)*PKT_DATA_SIZE, data_len);
 
             // PKT CRC
             m_crc.reset();
@@ -251,7 +264,8 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     return numSent;
 }/*}}}*/
 
-int RadioManager::sendCompressed(byte * data, const ulong numBytes)/*{{{*/
+/*{{{*//* // send compressed
+int RadioManager::sendCompressed(byte * data, const ulong numBytes)
 {
     ulong sizeDataCompressed = (numBytes * 1.1) + 12;
     byte dataCompressed[sizeDataCompressed];
@@ -289,13 +303,13 @@ int RadioManager::sendCompressed(byte * data, const ulong numBytes)/*{{{*/
         }
     }
     return numSent;
-}/*}}}*/
+}*//*}}}*/
 
 void RadioManager::write_loop()/*{{{*/
 {
     byte * window_buf = (byte *) calloc(MAX_PKTS_WRITE_LOOP*MAX_PKT_SIZE,sizeof(byte));
     unique_lock<mutex> lck(write_cv_mtx);
-    while(!end_thread || !send_window.empty() || !to_send.empty()){
+    while(is_open && (!end_thread || !send_window.empty() || !to_send.empty())){
         // add packets to send_window, until full or to_send is empty
         int num_pkts_added = 0;
         while(send_window.size() < MAX_PKTS_WRITE_LOOP && num_pkts_added < to_send.size()){
@@ -311,22 +325,50 @@ void RadioManager::write_loop()/*{{{*/
         for(auto pkt_iter = send_window.begin(); pkt_iter != send_window.end(); pkt_iter++){
             pkt_iter->send_count--;
             memcpy(window_ptr,pkt_iter->data,pkt_iter->len);
+            print_pkt(*pkt_iter);
+            num_pkts++;
             window_ptr += pkt_iter->len;
         }
-        print_hex(window_buf, window_ptr - window_buf);
+        //print_hex(window_buf, window_ptr - window_buf);
         shared_mem_mtx.unlock(); // MUTEX UNLOCK
 
         // write the data
-        //size_t num_bytes_to_send = window_ptr - window_buf;
-        //window_ptr = window_buf;
-        //while(num_bytes_to_send > 0){
-        //    int num_bytes_sent = write(m_fd,window_ptr,num_bytes_to_send);
-        //    if(num_bytes_sent < 0){
-        //        throw write_err;
-        //    }
-        //    num_bytes_to_send -= num_bytes_sent;
-        //    window_ptr += num_bytes_sent;
-        //}
+        size_t num_bytes_to_send = window_ptr - window_buf;
+        window_ptr = window_buf;
+        static size_t bytes_sent = 0;
+        while(num_bytes_to_send > 0){
+            int num_bytes_sent;
+            size_t write_size = 256; //MAX_PKT_SIZE;
+            if (num_bytes_to_send < write_size)
+                write_size = num_bytes_to_send;
+            try{
+                num_bytes_sent = write(m_fd,window_ptr,write_size);
+                if(num_bytes_sent < 0){
+                    throw write_err;
+                }
+            } catch(exception err){
+                cout << err.what() << endl;
+                is_open = false;
+                free(window_buf);
+                return;
+            }
+            num_bytes_to_send -= num_bytes_sent;
+            bytes_sent += num_bytes_sent;
+            window_ptr += num_bytes_sent;
+            cout << "num_bytes_sent: " << num_bytes_sent << " total: " << bytes_sent << endl;
+
+            if(tcdrain(m_fd) != 0){
+                int errsv = errno;
+                cout << "tcdrain: " << errsv << endl;
+                char buf[40];
+                strerror_r(errsv,buf,40);
+                cout << buf << endl;
+            }
+            if(tcflush(m_fd, TCIOFLUSH) != 0 ){
+                cout << "flush issue" << endl;
+            }
+            usleep(30000);
+        }
 
 
         // get ACK
@@ -337,9 +379,9 @@ void RadioManager::write_loop()/*{{{*/
         send_window.clear();
 
         // if nothing to send, wait until notify
-        while(to_send.empty() && send_window.empty() && !end_thread) 
+        while(to_send.empty() && send_window.empty() && !end_thread && is_open) 
             write_cv.wait(lck);
     }
-    cout << "exiting the thread, free window buf" << endl;
+    //cout << "exiting the thread, free window buf" << endl;
     free(window_buf);
 }/*}}}*/

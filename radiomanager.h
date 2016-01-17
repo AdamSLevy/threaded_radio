@@ -1,6 +1,7 @@
 #pragma once
 
-#define DEFAULT_TTY_PORT_NAME "S1"
+//#define DEFAULT_TTY_PORT_NAME "S1"
+#define DEFAULT_TTY_PORT_NAME ".usbserial-A103N2XP"
 
 // set up serial error codes
 #define OPEN_SUCCESS        0x00
@@ -86,7 +87,7 @@ public:
     int setUpSerial();
     int closeSerial();
     int send(byte * data, const ulong numBytes);
-    int sendCompressed(byte * data, const ulong numBytes);
+    //int sendCompressed(byte * data, const ulong numBytes);
 
 private:
     void write_loop();
@@ -108,5 +109,8 @@ private:
     thread write_th;
     condition_variable write_cv;
     bool end_thread;
+    bool is_open;
+
+    int num_pkts;
 
 };
