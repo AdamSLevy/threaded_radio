@@ -3,9 +3,13 @@ This is a test program for the RadioManager class used for sending telemetry ser
 
 ## class RadioManager
 The RadioManager class 
+
 1. manages the OS calls to open/write/close a serial port on linux using [termios](http://man7.org/linux/man-pages/man3/termios.3.html), 
+
 2. compresses arbitrary data using [zlib](http://www.zlib.net/) prior to sending and packetizes the data with header/footer, message/packet id's, and a four byte crc32 checksum, 
+
 3. sends packets in a rolling window style which waits for acknowledgments every `MAX_PKTS_WRITE_LOOP` number of packets. Unacknowledged packets are resent up to `MAX_NUM_ATTEMPTS`. (`MAX_PKTS_WRITE_LOOP` and `MAX_NUM_ATTEMPTS` are `#define`'s in radiomanager.h)
+
 
 ## Building
 Simply run `make` in the project directory. The executable will be named `./emulator`
