@@ -92,14 +92,14 @@ START:
                 //cout.flush();
                 //sleep(1);
             }
-            cout << endl << endl;
+            //cout << endl << endl;
         } else{
             cout << "Failed to send! \n";
             errorCode = radio.closeSerial();
             goto START; // im a bad boy, but it works
         }
 
-        if(total_bytes > 10000){
+        if(total_bytes > 50000){
             //cout << "Total Sent: " << total_bytes << endl;
             sleep(5);
             return 0;

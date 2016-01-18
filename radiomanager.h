@@ -1,7 +1,8 @@
 #pragma once
 
-//#define DEFAULT_TTY_PORT_NAME "S1"
-#define DEFAULT_TTY_PORT_NAME ".usbserial-A103N2XP"
+//#define DEFAULT_TTY_PORT_NAME "/dev/ttyS1"
+
+#define DEFAULT_TTY_PORT_NAME "/dev/cu.usbserial-A103N2XP"
 
 // set up serial error codes
 #define OPEN_SUCCESS        0x00
@@ -50,17 +51,11 @@ typedef unsigned char byte;
 #define MAX_PKT_SIZE (HEADER_SIZE + ID_SIZE + PKT_DATA_SIZE + CRC_SIZE + FOOTER_SIZE)
 #define HEAD_PKT_SIZE (HEADER_SIZE + ID_SIZE + 1 + CRC_SIZE + CRC_SIZE + FOOTER_SIZE)
 
-//#define MSG_BUF_SIZE    (4096*3)    // 12288 bytes, up to 86 packets
-//#define SHARED_BUF_SIZE (4096*12*2)   // 49152 bytes, 346 packets of size 142bytes, 4.9 messages at 70 packets per msg, 
-
 // for standard packet with full data
 #define ID_OFFSET       HEADER_SIZE
 #define PKT_DATA_OFFSET (ID_OFFSET+ID_SIZE)
 #define CRC_OFFSET(data_len)      (PKT_DATA_OFFSET+data_len)
 #define FOOTER_OFFSET(data_len)   (CRC_OFFSET(data_len)+CRC_SIZE)
-
-//#define MAX_PKTS_SHARED_BUF (SHARED_BUF_SIZE / MAX_PKT_SIZE)
-//#define MAX_PKTS_MSG_BUF (MSG_BUF_SIZE / MAX_PKT_SIZE)
 
 #define MAX_PKTS_WRITE_LOOP 20
 #define MAX_NUM_ATTEMPTS 3
@@ -96,7 +91,7 @@ private:
     struct termios m_config;
     string m_ttyPortName;
     CRC32 m_crc;
-    const ulong HEADER;
+    //const ulong HEADER;
     const ulong FOOTER;
 
     vector<Packet> to_send;

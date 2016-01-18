@@ -8,11 +8,9 @@ class write_err: public exception/*{{{*/
 	}
 } write_err;/*}}}*/
 
-RadioManager::RadioManager(): HEADER(0xFAffFFfa), FOOTER(0xFeffFFfe)/*{{{*/
+RadioManager::RadioManager(): /*HEADER(0xFAffFFfa),*/ FOOTER(0xFeffFFfe)/*{{{*/
 {
-    //m_ttyPortName = "/dev/tty";
-    m_ttyPortName = "/dev/cu";
-    m_ttyPortName += DEFAULT_TTY_PORT_NAME;
+    m_ttyPortName = DEFAULT_TTY_PORT_NAME;
 
     end_thread = false;
     is_open = false;
@@ -187,7 +185,8 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     int z_result = compress( dataCompressed, &sizeDataCompressed, data, numBytes);
     /*}}}*/
     if(Z_OK == z_result){
-        size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;/*{{{*/
+        // set up 
+        size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
         size_t numTotalBytesForPkts = HEAD_PKT_SIZE + numPkts * MAX_PKT_SIZE - PKT_DATA_SIZE
                                      + sizeDataCompressed - (numPkts - 1)*PKT_DATA_SIZE;
         
@@ -195,7 +194,7 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         byte pktID = 0;
         Packet * pkt_to_send = new Packet[numPkts+1];
 
-        // HEAD PKT/*{{{*/
+        // create HEAD PKT/*{{{*/
         byte * pkt_data = pkt_to_send[0].data;
 
         // ID
@@ -214,8 +213,10 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         m_crc.getHash(pkt_data+CRC_OFFSET(1+CRC_SIZE));
 
         pkt_to_send[pktID].len = HEAD_PKT_SIZE;
+        /*}}}*/
 
-        for(pktID = 1; pktID < numPkts+1; pktID++){/*{{{*/
+        // create remaining data filled packets /*{{{*/ 
+        for(pktID = 1; pktID < numPkts+1; pktID++){
             int data_len = PKT_DATA_SIZE;
             if(bytesRemaining < PKT_DATA_SIZE)
                 data_len = bytesRemaining;
@@ -243,7 +244,8 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
                 for(int i = 0; i < FOOTER_SIZE; i++)
                     pkt_data[FOOTER_OFFSET(data_len) + i]=foot_ptr[i];
             }
-        }/*}}}*/
+        }
+        /*}}}*/
 
         // copy pkts to shared mem
         shared_mem_mtx.lock();      // MUTEX LOCK
@@ -322,27 +324,28 @@ void RadioManager::write_loop()/*{{{*/
         to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
         // write the packet data to the window buffer
         byte * window_ptr = window_buf;
-        for(auto pkt_iter = send_window.begin(); pkt_iter != send_window.end(); pkt_iter++){
-            pkt_iter->send_count--;
-            memcpy(window_ptr,pkt_iter->data,pkt_iter->len);
-            print_pkt(*pkt_iter);
+        for(auto & pkt_iter : send_window){
+            pkt_iter.send_count--;
+            memcpy(window_ptr,pkt_iter.data,pkt_iter.len);
+            //print_pkt(*pkt_iter);
             num_pkts++;
-            window_ptr += pkt_iter->len;
+            window_ptr += pkt_iter.len;
         }
         //print_hex(window_buf, window_ptr - window_buf);
         shared_mem_mtx.unlock(); // MUTEX UNLOCK
 
         // write the data
         size_t num_bytes_to_send = window_ptr - window_buf;
+        cout << " num bytes to send: " << num_bytes_to_send << endl;
         window_ptr = window_buf;
         static size_t bytes_sent = 0;
         while(num_bytes_to_send > 0){
-            int num_bytes_sent;
-            size_t write_size = 256; //MAX_PKT_SIZE;
-            if (num_bytes_to_send < write_size)
-                write_size = num_bytes_to_send;
+            int num_bytes_sent = 0;
             try{
-                num_bytes_sent = write(m_fd,window_ptr,write_size);
+                size_t max_bytes = 500;
+                if(max_bytes > num_bytes_to_send)
+                    max_bytes = num_bytes_to_send;
+                num_bytes_sent = write(m_fd,window_ptr,max_bytes);
                 if(num_bytes_sent < 0){
                     throw write_err;
                 }
@@ -367,7 +370,9 @@ void RadioManager::write_loop()/*{{{*/
             if(tcflush(m_fd, TCIOFLUSH) != 0 ){
                 cout << "flush issue" << endl;
             }
-            usleep(30000);
+            size_t send_time = 1e6 * num_bytes_sent / (115200/9)+100000;
+            cout << "sleep_time " << send_time << endl;
+            usleep(send_time);
         }
 
 
