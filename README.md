@@ -8,7 +8,7 @@ The RadioManager class
 
 2. compresses arbitrary data using [zlib](http://www.zlib.net/) prior to sending and packetizes the data with header/footer, message/packet id's, and a four byte crc32 checksum, 
 
-3. sends packets in a rolling window style which waits for acknowledgments every `MAX_PKTS_WRITE_LOOP` number of packets. Unacknowledged packets are resent up to `MAX_NUM_ATTEMPTS`. (`MAX_PKTS_WRITE_LOOP` and `MAX_NUM_ATTEMPTS` are `#define`'s in radiomanager.h)
+3. sends packets in a rolling window style which waits for acknowledgments every `MAX_PKTS_WRITE_LOOP` number of packets. Unacknowledged packets are resent up to `MAX_NUM_ATTEMPTS`. (`MAX_PKTS_WRITE_LOOP` and `MAX_NUM_ATTEMPTS` are `#define`'s in *radiomanager.h*)
 
 
 ## Building
