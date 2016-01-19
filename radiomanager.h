@@ -17,6 +17,8 @@
 
 #include <termios.h>
 #include <unistd.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #include <fcntl.h>
 #include <string.h>
 #include <stdio.h>
@@ -60,9 +62,10 @@ typedef unsigned char byte;
 #define FOOTER_OFFSET(data_len)   (CRC_OFFSET(data_len)+CRC_SIZE)
 
 #define MAX_PKTS_WRITE_LOOP 20
+#define MAX_ACK_SIZE (HEADER_SIZE + MAX_PKTS_WRITE_LOOP + 2 + 2 + CRC_SIZE + FOOTER_SIZE)
 #define MAX_NUM_ATTEMPTS 3
 #define NUM_BYTES_WRITE_CALL 128
-#define READ_BUF_SIZE 500
+#define READ_BUF_SIZE (MAX_ACK_SIZE * 4)
 
 struct Packet{
     byte len = MAX_PKT_SIZE;
@@ -100,6 +103,7 @@ private:
     vector<Packet> to_send;
 
     vector<Packet> send_window;
+    byte * window_buf;
 
     // mutexes
     mutex shared_mem_mtx;   // shared memory mutex

@@ -10,6 +10,7 @@ class write_err: public exception/*{{{*/
 
 RadioManager::RadioManager(): /*HEADER(0xFAffFFfa),*/ FOOTER(0xFeffFFfe)/*{{{*/
 {
+    window_buf = (byte *) calloc(MAX_PKTS_WRITE_LOOP*MAX_PKT_SIZE,sizeof(byte));
     m_ttyPortName = DEFAULT_TTY_PORT_NAME;
 
     end_thread = false;
@@ -27,6 +28,7 @@ RadioManager::~RadioManager()/*{{{*/
     write_cv_mtx.unlock();
     closeSerial();
     cout << " num pkts: " << num_pkts << endl;
+    free(window_buf);
 }/*}}}*/
 
 int RadioManager::setUpSerial()/*{{{*/
@@ -307,7 +309,6 @@ int RadioManager::sendCompressed(byte * data, const ulong numBytes)
 
 void RadioManager::write_loop()/*{{{*/
 {
-    byte * window_buf = (byte *) calloc(MAX_PKTS_WRITE_LOOP*MAX_PKT_SIZE,sizeof(byte));
     unique_lock<mutex> lck(write_cv_mtx);
     while(is_open && (!end_thread || !send_window.empty() || !to_send.empty())){
         // add packets to send_window, until full or to_send is empty
@@ -350,7 +351,6 @@ void RadioManager::write_loop()/*{{{*/
             } catch(exception err){
                 cout << err.what() << endl;
                 is_open = false;
-                free(window_buf);
                 return;
             }
             num_bytes_to_send -= num_bytes_sent;
@@ -374,6 +374,37 @@ void RadioManager::write_loop()/*{{{*/
         }
 
         // get ACK
+        byte read_buf[READ_BUF_SIZE];
+        byte * read_ptr = read_buf;
+        size_t read_buf_remaining = READ_BUF_SIZE;
+        size_t read_buf_read = 0;
+        bool has_footer = false;
+
+        fd_set rfds;
+        struct timeval tv;
+        int read_ready;
+        
+        FD_ZERO(&rfds);
+        FD_SET(m_fd, &rfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;
+        read_ready = select(1, &rfds, nullptr, nullptr, &tv);
+
+        if(read_ready < 0){
+            cout << "select issue";
+        }
+
+        if(read_ready){
+            while(read_buf_remaining > READ_BUF_SIZE - MAX_ACK_SIZE || !has_footer){// (read will not block || time < timeout) && footer is not found && read_buf_remaining != 0 
+                read_buf_read = read(m_fd,read_ptr,read_buf_remaining);
+                read_buf_remaining -= read_buf_read;
+                read_ptr += read_buf_read;
+                if(read_ptr > read_buf + READ_BUF_SIZE)
+                    read_ptr = read_buf;
+            }
+        }
+
+
 
         // parse ACK
         
@@ -385,5 +416,4 @@ void RadioManager::write_loop()/*{{{*/
             write_cv.wait(lck);
     }
     //cout << "exiting the thread, free window buf" << endl;
-    free(window_buf);
 }/*}}}*/
