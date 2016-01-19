@@ -11,6 +11,10 @@ emulator
 *.swn
 *~
 
+# time tracker app #
+####################
+.tracker*
+
 # OS generated files #
 ######################
 .DS_Store
