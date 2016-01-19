@@ -187,8 +187,7 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     if(Z_OK == z_result){
         // set up 
         size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
-        size_t numTotalBytesForPkts = HEAD_PKT_SIZE + numPkts * MAX_PKT_SIZE - PKT_DATA_SIZE
-                                     + sizeDataCompressed - (numPkts - 1)*PKT_DATA_SIZE;
+        size_t numTotalBytesForPkts = MSG_SIZE(sizeDataCompressed);
         
         size_t bytesRemaining = sizeDataCompressed;
         byte pktID = 0;
@@ -220,11 +219,10 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
             int data_len = PKT_DATA_SIZE;
             if(bytesRemaining < PKT_DATA_SIZE)
                 data_len = bytesRemaining;
-            
             bytesRemaining -= data_len;
 
             pkt_data = pkt_to_send[pktID].data;
-            byte pkt_len = MAX_PKT_SIZE - PKT_DATA_SIZE + data_len;
+            byte pkt_len = PKT_SIZE(data_len);
             pkt_to_send[pktID].len = pkt_len;
 
             // ID
@@ -374,7 +372,6 @@ void RadioManager::write_loop()/*{{{*/
             cout << "sleep_time " << send_time << endl;
             usleep(send_time);
         }
-
 
         // get ACK
 

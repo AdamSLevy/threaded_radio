@@ -48,8 +48,10 @@ typedef unsigned char byte;
 #define CRC_SIZE        4
 #define FOOTER_SIZE     4
 
-#define MAX_PKT_SIZE (HEADER_SIZE + ID_SIZE + PKT_DATA_SIZE + CRC_SIZE + FOOTER_SIZE)
-#define HEAD_PKT_SIZE (HEADER_SIZE + ID_SIZE + 1 + CRC_SIZE + CRC_SIZE + FOOTER_SIZE)
+#define PKT_SIZE(data_len) (HEADER_SIZE + ID_SIZE + data_len + CRC_SIZE + FOOTER_SIZE)
+#define MAX_PKT_SIZE PKT_SIZE(PKT_DATA_SIZE)
+#define HEAD_PKT_SIZE PKT_SIZE(1 + CRC_SIZE)
+#define MSG_SIZE(data_len) (HEAD_PKT_SIZE + MAX_PKT_SIZE * (data_len / PKT_DATA_SIZE) + PKT_SIZE(data_len % PKT_DATA_SIZE))
 
 // for standard packet with full data
 #define ID_OFFSET       HEADER_SIZE
@@ -60,6 +62,7 @@ typedef unsigned char byte;
 #define MAX_PKTS_WRITE_LOOP 20
 #define MAX_NUM_ATTEMPTS 3
 #define NUM_BYTES_WRITE_CALL 128
+#define READ_BUF_SIZE 500
 
 struct Packet{
     byte len = MAX_PKT_SIZE;
