@@ -44,6 +44,11 @@ using std::exception;
 typedef unsigned long ulong;
 typedef unsigned char byte;
 
+#define HEADER_HEX 0xFaFfFfFa
+#define FOOTER_HEX 0xFeFfFfFe
+
+#define MAX_ID 0xFF
+
 #define HEADER_SIZE     4
 #define ID_SIZE         2
 #define PKT_DATA_SIZE 128
@@ -61,8 +66,8 @@ typedef unsigned char byte;
 #define CRC_OFFSET(data_len)      (PKT_DATA_OFFSET+data_len)
 #define FOOTER_OFFSET(data_len)   (CRC_OFFSET(data_len)+CRC_SIZE)
 
-#define MAX_PKTS_WRITE_LOOP 20
-#define MAX_ACK_SIZE (HEADER_SIZE + MAX_PKTS_WRITE_LOOP + 2 + 2 + CRC_SIZE + FOOTER_SIZE)
+#define NUM_PKTS_PER_ACK 20
+#define MAX_ACK_SIZE (HEADER_SIZE + NUM_PKTS_PER_ACK + 2 + 2 + CRC_SIZE + FOOTER_SIZE)
 #define MAX_NUM_ATTEMPTS 3
 #define NUM_BYTES_WRITE_CALL 128
 #define READ_BUF_SIZE (MAX_ACK_SIZE * 4)

@@ -8,9 +8,9 @@ class write_err: public exception/*{{{*/
 	}
 } write_err;/*}}}*/
 
-RadioManager::RadioManager(): /*HEADER(0xFAffFFfa),*/ FOOTER(0xFeffFFfe)/*{{{*/
+RadioManager::RadioManager(): /*HEADER(HEADER_HEX),*/ FOOTER(FOOTER_HEX)/*{{{*/
 {
-    window_buf = (byte *) calloc(MAX_PKTS_WRITE_LOOP*MAX_PKT_SIZE,sizeof(byte));
+    window_buf = (byte *) calloc(NUM_PKTS_PER_ACK*MAX_PKT_SIZE,sizeof(byte));
     m_ttyPortName = DEFAULT_TTY_PORT_NAME;
 
     end_thread = false;
@@ -179,7 +179,7 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     int numSent = -1;
     if(!is_open)
         return numSent;
-    if(msgID > 0xFB)
+    if(msgID == MAX_ID)
         msgID = 0;
 
     size_t sizeDataCompressed = (numBytes * 1.1) + 12;
@@ -189,6 +189,8 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     if(Z_OK == z_result){
         // set up 
         size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
+        if((byte) numPkts == MAX_ID)
+            return -1;
         size_t numTotalBytesForPkts = MSG_SIZE(sizeDataCompressed);
         
         size_t bytesRemaining = sizeDataCompressed;
@@ -313,7 +315,7 @@ void RadioManager::write_loop()/*{{{*/
     while(is_open && (!end_thread || !send_window.empty() || !to_send.empty())){
         // add packets to send_window, until full or to_send is empty
         int num_pkts_added = 0;
-        while(send_window.size() < MAX_PKTS_WRITE_LOOP && num_pkts_added < to_send.size()){
+        while(send_window.size() < NUM_PKTS_PER_ACK && num_pkts_added < to_send.size()){
             Packet pkt = to_send[num_pkts_added++];
             send_window.push_back(pkt);
         }
@@ -380,15 +382,15 @@ void RadioManager::write_loop()/*{{{*/
         size_t read_buf_read = 0;
         bool has_footer = false;
 
-        fd_set rfds;
-        struct timeval tv;
-        int read_ready;
+        fd_set rfds;            // stores which fd's should be watched for bytes available to read
+        struct timeval tv;      // stores timeout for select
+        int read_ready;         // to store select return value
         
-        FD_ZERO(&rfds);
-        FD_SET(m_fd, &rfds);
+        FD_ZERO(&rfds);         // clear fd's
+        FD_SET(m_fd, &rfds);    // add m_fd to rfds
         tv.tv_sec = 0;
-        tv.tv_usec = 100000;
-        read_ready = select(1, &rfds, nullptr, nullptr, &tv);
+        tv.tv_usec = 100000;    // delay for select
+        read_ready = select(1, &rfds, nullptr, nullptr, &tv);   // will return on bytes available or timeout
 
         if(read_ready < 0){
             cout << "select issue";
@@ -417,3 +419,4 @@ void RadioManager::write_loop()/*{{{*/
     }
     //cout << "exiting the thread, free window buf" << endl;
 }/*}}}*/
+
