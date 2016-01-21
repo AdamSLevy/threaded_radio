@@ -40,6 +40,8 @@ int main(){
     std::default_random_engine gen;
     std::uniform_real_distribution<float> dist(0.0,100.0);
 
+    cout << sizeof(data) << endl;
+
     int total_bytes = 0;
     int errorCode = -1;
 

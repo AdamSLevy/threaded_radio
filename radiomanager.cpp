@@ -185,10 +185,10 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     size_t sizeDataCompressed = (numBytes * 1.1) + 12;
     byte dataCompressed[sizeDataCompressed];
     int z_result = compress( dataCompressed, &sizeDataCompressed, data, numBytes);
+    size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
     /*}}}*/
-    if(Z_OK == z_result){
+    if(Z_OK == z_result && numPkts < MAX_ID){
         // set up 
-        size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
         if((byte) numPkts == MAX_ID)
             return -1;
         size_t numTotalBytesForPkts = MSG_SIZE(sizeDataCompressed);
@@ -205,15 +205,16 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         pkt_data[ID_OFFSET+1]=pktID;
 
         // DATA: number of packets and compressed data crc
-        pkt_data[PKT_DATA_OFFSET]=(byte)numPkts;
+        pkt_data[PKT_DATA_OFFSET] = (byte)numPkts;
+
         m_crc.reset();
         m_crc.add(dataCompressed,sizeDataCompressed);
-        m_crc.getHash(pkt_data+PKT_DATA_OFFSET+1);
+        m_crc.getHash(pkt_data+PKT_DATA_OFFSET+3);
 
         // PKT CRC
         m_crc.reset();
-        m_crc.add(pkt_data+ID_OFFSET,ID_SIZE + 1 + CRC_SIZE);
-        m_crc.getHash(pkt_data+CRC_OFFSET(1+CRC_SIZE));
+        m_crc.add(pkt_data+ID_OFFSET,ID_SIZE + HEAD_PKT_DATA_SIZE);
+        m_crc.getHash(pkt_data+CRC_OFFSET(HEAD_PKT_DATA_SIZE));
 
         pkt_to_send[pktID].len = HEAD_PKT_SIZE;
         /*}}}*/
@@ -367,7 +368,7 @@ void RadioManager::write_loop()/*{{{*/
                 strerror_r(errsv,buf,40);
                 cout << buf << endl;
             }
-            if(tcflush(m_fd, TCIOFLUSH) != 0 ){
+            if(tcflush(m_fd, TCOFLUSH) != 0 ){
                 cout << "flush issue" << endl;
             }
             size_t send_time = 1e6 * num_bytes_sent / (115200/9)+100000;
@@ -388,25 +389,44 @@ void RadioManager::write_loop()/*{{{*/
         
         FD_ZERO(&rfds);         // clear fd's
         FD_SET(m_fd, &rfds);    // add m_fd to rfds
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000;    // delay for select
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;//200000;    // delay for select
+        cout << "wait for ack" << endl;
         read_ready = select(1, &rfds, nullptr, nullptr, &tv);   // will return on bytes available or timeout
+        cout << "read_ready: " << read_ready << endl;
 
         if(read_ready < 0){
             cout << "select issue";
+            return;
         }
 
-        if(read_ready){
-            while(read_buf_remaining > READ_BUF_SIZE - MAX_ACK_SIZE || !has_footer){// (read will not block || time < timeout) && footer is not found && read_buf_remaining != 0 
+
+        if(!send_window.empty() ){//&& read_ready){
+            cout << "bytes to read" << endl;
+            while(read_ptr-read_buf < MAX_ACK_SIZE || !has_footer){// (read will not block || time < timeout) && footer is not found && read_buf_remaining != 0 
+                cout << ". ";
                 read_buf_read = read(m_fd,read_ptr,read_buf_remaining);
                 read_buf_remaining -= read_buf_read;
                 read_ptr += read_buf_read;
-                if(read_ptr > read_buf + READ_BUF_SIZE)
-                    read_ptr = read_buf;
+                if(read_ptr > read_buf + READ_BUF_SIZE){
+                    cout << "read too much";
+                    return;
+                }
+
+                string footer((char *)(&FOOTER),4);
+                string in_data((char *)read_buf, read_ptr-read_buf);
+                print_hex(read_buf, read_ptr - read_buf);
+                size_t n = in_data.find(footer);
+                cout << " pos " << n << endl;
+
+                if(n != string::npos){
+                    has_footer = true;
+                    cout << "got ack" << endl;
+                } else{
+                    cout << " not found " << endl;
+                }
             }
         }
-
-
 
         // parse ACK
         

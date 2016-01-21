@@ -55,10 +55,11 @@ typedef unsigned char byte;
 #define CRC_SIZE        4
 #define FOOTER_SIZE     4
 
-#define PKT_SIZE(data_len) (HEADER_SIZE + ID_SIZE + data_len + CRC_SIZE + FOOTER_SIZE)
-#define MAX_PKT_SIZE PKT_SIZE(PKT_DATA_SIZE)
-#define HEAD_PKT_SIZE PKT_SIZE(1 + CRC_SIZE)
-#define MSG_SIZE(data_len) (HEAD_PKT_SIZE + MAX_PKT_SIZE * (data_len / PKT_DATA_SIZE) + PKT_SIZE(data_len % PKT_DATA_SIZE))
+#define PKT_SIZE(data_len)  (HEADER_SIZE + ID_SIZE + data_len + CRC_SIZE + FOOTER_SIZE)
+#define MSG_SIZE(data_len)  (HEAD_PKT_SIZE + MAX_PKT_SIZE * (data_len / PKT_DATA_SIZE) + PKT_SIZE(data_len % PKT_DATA_SIZE))
+#define MAX_PKT_SIZE        PKT_SIZE(PKT_DATA_SIZE)
+#define HEAD_PKT_DATA_SIZE  1 + 4 // 1 for num_pkts, 4 for message crc
+#define HEAD_PKT_SIZE       PKT_SIZE(HEAD_PKT_DATA_SIZE)
 
 // for standard packet with full data
 #define ID_OFFSET       HEADER_SIZE
