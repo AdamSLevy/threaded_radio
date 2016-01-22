@@ -97,25 +97,44 @@ public:
     //int sendCompressed(byte * data, const ulong numBytes);
 
 private:
-    void write_loop();
     int m_fd; // file descripter for serial port
     struct termios m_oldConfig;
     struct termios m_config;
     string m_ttyPortName;
     CRC32 m_crc;
-    //const ulong HEADER;
+    const ulong HEADER;
     const ulong FOOTER;
 
+    // populated by send(), emptied by write_loop()
     vector<Packet> to_send;
+    mutex to_send_mtx;
 
+    // populated by write_loop(), emptied by read_loop()
+    vector<Packet> to_ack;
+    mutex to_ack_mtx;
+
+    // populated by read_loop(), empted by write_loop()
+    vector<Packet> to_resend;
+    mutex to_resend_mtx;
+
+    // solely used by write_loop()
     vector<Packet> send_window;
     byte * window_buf;
 
     // mutexes
-    mutex shared_mem_mtx;   // shared memory mutex
-    mutex write_cv_mtx;     // write thread mutex
+    void write_loop();
     thread write_th;
-    condition_variable write_cv;
+
+    condition_variable write_cv;    // used for waking up write_loop
+    mutex write_cv_mtx;             // used by read_loop() and send() if write_loop doesn't own write_cr_mtx
+                                    // which indicates that write_loop is waiting and not writing
+                                    
+    void read_loop();
+    thread read_th;
+
+    void verify_crc(string data);
+    void request_ack_resend();
+
     bool end_thread;
     bool is_open;
 

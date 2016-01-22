@@ -8,7 +8,7 @@ class write_err: public exception/*{{{*/
 	}
 } write_err;/*}}}*/
 
-RadioManager::RadioManager(): /*HEADER(HEADER_HEX),*/ FOOTER(FOOTER_HEX)/*{{{*/
+RadioManager::RadioManager(): HEADER(HEADER_HEX),FOOTER(FOOTER_HEX)/*{{{*/
 {
     window_buf = (byte *) calloc(NUM_PKTS_PER_ACK*MAX_PKT_SIZE,sizeof(byte));
     m_ttyPortName = DEFAULT_TTY_PORT_NAME;
@@ -91,6 +91,10 @@ int RadioManager::setUpSerial()/*{{{*/
 
     write_th = thread(&RadioManager::write_loop,this);
     write_th.detach();
+
+    read_th = thread(&RadioManager::read_loop,this);
+    read_th.detach();
+
     return OPEN_SUCCESS;
 }/*}}}*/
 
@@ -107,8 +111,8 @@ int RadioManager::closeSerial()/*{{{*/
             exitCode |= CLOSE_FAIL;
         }
         is_open = false;
+        end_thread = true;
         m_fd = -1;
-        //write_th.join();
     }
 
     return exitCode;
@@ -251,11 +255,11 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         /*}}}*/
 
         // copy pkts to shared mem
-        shared_mem_mtx.lock();      // MUTEX LOCK
+        to_send_mtx.lock();      // MUTEX LOCK
         for(pktID = 0; pktID < numPkts+1; pktID++){
             to_send.push_back(pkt_to_send[pktID]);
         }
-        shared_mem_mtx.unlock();    // MUTEX UNLOCK
+        to_send_mtx.unlock();    // MUTEX UNLOCK
 
         if(write_cv_mtx.try_lock()){
             write_cv.notify_one();
@@ -313,17 +317,37 @@ int RadioManager::sendCompressed(byte * data, const ulong numBytes)
 void RadioManager::write_loop()/*{{{*/
 {
     unique_lock<mutex> lck(write_cv_mtx);
-    while(is_open && (!end_thread || !send_window.empty() || !to_send.empty())){
-        // add packets to send_window, until full or to_send is empty
+    while(is_open && (!end_thread || !send_window.empty() || !to_send.empty() || !to_resend.empty())){
+        // resend packets get priority
+        // add packets to send_window, until full or to_resend is empty
         int num_pkts_added = 0;
+        to_resend_mtx.lock();  // MUTEX LOCK
+        while(send_window.size() < NUM_PKTS_PER_ACK && num_pkts_added < to_resend.size()){
+            Packet pkt = to_resend[num_pkts_added++];
+            send_window.push_back(pkt);
+        }
+        // from to_resend, remove the packets that were added to send_window
+        to_resend.erase(to_resend.begin(),to_resend.begin()+num_pkts_added);
+        to_resend_mtx.unlock(); // MUTEX UNLOCK
+
+        // now add the to_send packets
+        num_pkts_added = 0; 
+        to_send_mtx.lock();  // MUTEX LOCK
         while(send_window.size() < NUM_PKTS_PER_ACK && num_pkts_added < to_send.size()){
             Packet pkt = to_send[num_pkts_added++];
             send_window.push_back(pkt);
         }
-
-        shared_mem_mtx.lock();  // MUTEX LOCK
         // from to_send, remove the packets that were added to send_window
         to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
+        to_send_mtx.unlock(); // MUTEX UNLOCK
+
+        // the packets in send_window will need to be acknowledged
+        to_ack_mtx.lock();
+        for( auto pkt : send_window )
+            to_ack.push_back(pkt);
+        to_ack_mtx.unlock();
+
+
         // write the packet data to the window buffer
         byte * window_ptr = window_buf;
         for(auto & pkt_iter : send_window){
@@ -334,11 +358,10 @@ void RadioManager::write_loop()/*{{{*/
             window_ptr += pkt_iter.len;
         }
         //print_hex(window_buf, window_ptr - window_buf);
-        shared_mem_mtx.unlock(); // MUTEX UNLOCK
 
         // write the data
         size_t num_bytes_to_send = window_ptr - window_buf;
-        cout << " num bytes to send: " << num_bytes_to_send << endl;
+        //cout << " num bytes to send: " << num_bytes_to_send << endl;
         window_ptr = window_buf;
         static size_t bytes_sent = 0;
         while(num_bytes_to_send > 0){
@@ -352,91 +375,273 @@ void RadioManager::write_loop()/*{{{*/
                     throw write_err;
                 }
             } catch(exception err){
-                cout << err.what() << endl;
+                //cout << err.what() << endl;
                 is_open = false;
                 return;
             }
             num_bytes_to_send -= num_bytes_sent;
             bytes_sent += num_bytes_sent;
             window_ptr += num_bytes_sent;
-            cout << "num_bytes_sent: " << num_bytes_sent << " total: " << bytes_sent << endl;
+            //cout << "num_bytes_sent: " << num_bytes_sent << " total: " << bytes_sent << endl;
 
             if(tcdrain(m_fd) != 0){
                 int errsv = errno;
-                cout << "tcdrain: " << errsv << endl;
+                //cout << "tcdrain: " << errsv << endl;
                 char buf[40];
                 strerror_r(errsv,buf,40);
-                cout << buf << endl;
+                //cout << buf << endl;
             }
             if(tcflush(m_fd, TCOFLUSH) != 0 ){
-                cout << "flush issue" << endl;
+                //cout << "flush issue" << endl;
             }
             size_t send_time = 1e6 * num_bytes_sent / (115200/9)+100000;
-            cout << "sleep_time " << send_time << endl;
+            //cout << "sleep_time " << send_time << endl;
             usleep(send_time);
         }
 
-        // get ACK
-        byte read_buf[READ_BUF_SIZE];
-        byte * read_ptr = read_buf;
-        size_t read_buf_remaining = READ_BUF_SIZE;
-        size_t read_buf_read = 0;
-        bool has_footer = false;
-
-        fd_set rfds;            // stores which fd's should be watched for bytes available to read
-        struct timeval tv;      // stores timeout for select
-        int read_ready;         // to store select return value
-        
-        FD_ZERO(&rfds);         // clear fd's
-        FD_SET(m_fd, &rfds);    // add m_fd to rfds
-        tv.tv_sec = 2;
-        tv.tv_usec = 0;//200000;    // delay for select
-        cout << "wait for ack" << endl;
-        read_ready = select(1, &rfds, nullptr, nullptr, &tv);   // will return on bytes available or timeout
-        cout << "read_ready: " << read_ready << endl;
-
-        if(read_ready < 0){
-            cout << "select issue";
-            return;
-        }
-
-
-        if(!send_window.empty() ){//&& read_ready){
-            cout << "bytes to read" << endl;
-            while(read_ptr-read_buf < MAX_ACK_SIZE || !has_footer){// (read will not block || time < timeout) && footer is not found && read_buf_remaining != 0 
-                cout << ". ";
-                read_buf_read = read(m_fd,read_ptr,read_buf_remaining);
-                read_buf_remaining -= read_buf_read;
-                read_ptr += read_buf_read;
-                if(read_ptr > read_buf + READ_BUF_SIZE){
-                    cout << "read too much";
-                    return;
-                }
-
-                string footer((char *)(&FOOTER),4);
-                string in_data((char *)read_buf, read_ptr-read_buf);
-                print_hex(read_buf, read_ptr - read_buf);
-                size_t n = in_data.find(footer);
-                cout << " pos " << n << endl;
-
-                if(n != string::npos){
-                    has_footer = true;
-                    cout << "got ack" << endl;
-                } else{
-                    cout << " not found " << endl;
-                }
-            }
-        }
-
-        // parse ACK
-        
         // populate send_window
         send_window.clear();
 
         // if nothing to send, wait until notify
-        while(to_send.empty() && send_window.empty() && !end_thread && is_open) 
+        while(to_send.empty() && to_resend.empty() && send_window.empty() && !end_thread && is_open) 
             write_cv.wait(lck);
     }
     //cout << "exiting the thread, free window buf" << endl;
+}/*}}}*/
+
+int call_select(int fd, size_t delay_sec, size_t delay_usec)/*{{{*/
+{
+    fd_set rfds;            // stores which fd's should be watched for bytes available to read
+    struct timeval tv;      // stores timeout for select
+    
+    FD_ZERO(&rfds);         // clear fd's
+    FD_SET(fd, &rfds);    // add m_fd to rfds
+
+    // set delay
+    tv.tv_sec = delay_sec;
+    tv.tv_usec = delay_usec;
+
+    cout << " wait " << endl;
+    return select(1, &rfds, nullptr, nullptr, &tv);   // will return on bytes available or timeout
+}/*}}}*/
+
+size_t count(const string to_search, const string to_count){/*{{{*/
+    size_t count = 0;
+    if(to_search.size() < to_count.size())
+        return 0;
+    for(int i = 0; i < to_search.size() - to_count.size(); i++){
+        if(to_count == string(to_search.c_str()+i, to_count.size()))
+            count++;
+    }
+    return count;
+}/*}}}*/
+
+void RadioManager::read_loop()/*{{{*/
+{
+    static byte read_buf[READ_BUF_SIZE];
+    static byte * read_ptr = read_buf;
+    static bool partial_pkt = false;
+    static string current_pkt;
+    string header((char *)(&HEADER),4);
+    string footer((char *)(&FOOTER),4);
+    while(is_open && (!end_thread || !to_ack.empty() || !to_resend.empty())){
+        // read in new packet
+        while(!end_thread && is_open && call_select(m_fd, 0, 1000000)){    // while there are still bytes available or .5 sec passes
+            cout << "select was 1" << endl;
+            size_t bytes_read = read(m_fd, read_ptr, READ_BUF_SIZE - (read_ptr - read_buf));
+            cout << "bytes_read: " << bytes_read << endl;
+            read_ptr += bytes_read;
+            print_hex(read_buf, bytes_read); // debug
+        }
+        //size_t bytes_read = read(m_fd, read_ptr, READ_BUF_SIZE - (read_ptr - read_buf));
+        //cout << "bytes_read: " << bytes_read << endl;
+        //read_ptr += bytes_read;
+
+        if(read_ptr - read_buf == 0)
+            continue;
+        string in_data((char *)read_buf, read_ptr-read_buf);
+
+
+        size_t search_from = 0;
+        if(partial_pkt){
+            size_t footer_index = in_data.find(footer);
+            size_t next_header_index = in_data.find(header,0);
+
+            if(footer_index != string::npos){
+                if(next_header_index == string::npos || footer_index < next_header_index){
+                    current_pkt += string((char *)read_buf,footer_index);
+                    verify_crc(current_pkt);
+                    partial_pkt = false;
+                }
+            } else if (next_header_index == string::npos){
+                current_pkt += in_data;
+                partial_pkt = true;
+            } else{
+                partial_pkt = false;
+            }
+            if(next_header_index != string::npos){
+                search_from = next_header_index;
+            }
+        }
+
+        size_t num_headers = count(in_data, header);
+
+        for(int i = 0; i < num_headers; i++){
+            size_t header_index = in_data.find(header);
+            size_t footer_index = in_data.find(footer,header_index);
+
+            size_t next_header_index = in_data.find(header,header_index+4);
+
+            if(footer_index != string::npos){
+                if(next_header_index == string::npos || footer_index < next_header_index){
+                    current_pkt = string((char *)(read_buf + header_index + 4), footer_index - header_index - 4);
+                    verify_crc(current_pkt);
+                }
+            } else if(next_header_index == string::npos){
+                current_pkt = string((char *)(read_buf + header_index + 4),read_ptr - (read_buf + header_index + 4));
+                partial_pkt = true;
+            }
+            if(next_header_index != string::npos)
+                search_from = next_header_index;
+        }
+    }
+}/*}}}*/
+
+struct MsgPktID{
+    byte msg_id;
+    byte pkt_id;
+};
+
+void RadioManager::verify_crc(string data){/*{{{*/
+    static CRC32 crc;
+    static vector<Packet> ack_resend_wait;
+
+    crc.reset();
+    crc.add(data.c_str(),data.size() - 4);
+    byte h[4];
+    crc.getHash(h);
+    string hash((char *)h,4);
+
+    if(hash == string(data.c_str() + data.size() - 4, 4)){
+        byte * data_ptr = (byte *)data.c_str();
+        MsgPktID id;
+        bool resent_ack = false;
+        if(data_ptr[0] == 0xFF){
+            resent_ack = true;
+        }
+        id.msg_id = data_ptr[0 + resent_ack];
+        id.pkt_id = data_ptr[1 + resent_ack];
+        byte current_msg_id = data_ptr[0 + resent_ack];
+
+        vector<MsgPktID> ack_id;
+        ack_id.push_back(id);
+        for(int i = 2 + resent_ack; i < data.size(); i++){
+            byte bb = data_ptr[i];
+            if(bb == 0xFF){
+                current_msg_id = data_ptr[i+1];
+                i++;
+                continue;
+            }
+            id.msg_id = current_msg_id;
+            id.pkt_id = bb;
+            ack_id.push_back(id);
+        }
+
+        if(!resent_ack){
+            to_ack_mtx.lock();
+            bool resend_req = false;
+            for(auto pkt : to_ack){
+                id.msg_id = pkt.data[ID_OFFSET];
+                id.pkt_id = pkt.data[ID_OFFSET+1];
+
+                bool has_ack = false;
+                for( auto p_id : ack_id ){
+                    if( p_id.msg_id == id.msg_id &&
+                            p_id.pkt_id == id.pkt_id ){
+                        has_ack = true;
+                        break;
+                    }
+                }
+                if(!has_ack){
+                    if( !resend_req ){
+                        to_resend_mtx.lock();
+                        resend_req = true;
+                    }
+                    to_resend.push_back(pkt);
+                }
+            }
+            to_ack.clear();
+            if(resend_req){
+                to_resend_mtx.unlock();
+                // wake up write loop
+                if(write_cv_mtx.try_lock()){
+                    write_cv.notify_one();
+                    write_cv_mtx.unlock();
+                }
+            }
+            to_ack_mtx.unlock();
+        } else{
+            bool resend_req = false;
+            for(auto pkt : ack_resend_wait){
+                id.msg_id = pkt.data[ID_OFFSET];
+                id.pkt_id = pkt.data[ID_OFFSET+1];
+
+                bool has_ack = false;
+                for( auto p_id : ack_id ){
+                    if( p_id.msg_id == id.msg_id &&
+                            p_id.pkt_id == id.pkt_id ){
+                        has_ack = true;
+                        break;
+                    }
+                }
+                if(!has_ack){
+                    if( !resend_req ){
+                        to_resend_mtx.lock();
+                        resend_req = true;
+                    }
+                    to_resend.push_back(pkt);
+                }
+            }
+            ack_resend_wait.clear();
+            if(resend_req){
+                to_resend_mtx.unlock();
+                // wake up write loop
+                if(write_cv_mtx.try_lock()){
+                    write_cv.notify_one();
+                    write_cv_mtx.unlock();
+                }
+            }
+        }
+    } else if(!to_ack.empty()){
+        request_ack_resend();
+
+        to_ack_mtx.lock();
+        ack_resend_wait = to_ack;
+        to_ack.clear();
+        to_ack_mtx.unlock();
+    }
+}/*}}}*/
+
+void RadioManager::request_ack_resend(){/*{{{*/
+    cout << "request resend" << endl;
+    to_resend_mtx.lock();
+
+    Packet request_ack_pkt;
+    request_ack_pkt.data[ID_OFFSET] = 0xFF;
+    request_ack_pkt.data[ID_OFFSET+1] = 0xFF;
+    CRC32 crc;
+    crc.reset();
+    crc.add(request_ack_pkt.data + ID_OFFSET, 2);
+    crc.getHash(request_ack_pkt.data+CRC_OFFSET(0));
+    memcpy(request_ack_pkt.data + FOOTER_OFFSET(0), (byte*)(&FOOTER), 4);
+    request_ack_pkt.len = PKT_SIZE(0);
+    to_resend.push_back(request_ack_pkt);
+
+    to_resend_mtx.unlock();
+
+    if(write_cv_mtx.try_lock()){
+        write_cv.notify_one();
+        write_cv_mtx.unlock();
+    }
 }/*}}}*/
 
