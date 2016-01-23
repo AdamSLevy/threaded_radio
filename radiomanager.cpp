@@ -316,6 +316,9 @@ int RadioManager::sendCompressed(byte * data, const ulong numBytes)
 
 void RadioManager::write_loop()/*{{{*/
 {
+    if(tcflush(m_fd, TCOFLUSH) != 0 ){
+        cout << "flush issue" << endl;
+    }
     unique_lock<mutex> lck(write_cv_mtx);
     while(is_open && (!end_thread || !send_window.empty() || !to_send.empty() || !to_resend.empty())){
         // resend packets get priority
@@ -395,9 +398,9 @@ void RadioManager::write_loop()/*{{{*/
                 strerror_r(errsv,buf,40);
                 //cout << buf << endl;
             }
-            if(tcflush(m_fd, TCOFLUSH) != 0 ){
+            //if(tcflush(m_fd, TCOFLUSH) != 0 ){
                 //cout << "flush issue" << endl;
-            }
+            //}
             size_t send_time = 1e6 * num_bytes_sent / (115200/9)+100000;
             //cout << "sleep_time " << send_time << endl;
             usleep(send_time);
@@ -412,20 +415,19 @@ void RadioManager::write_loop()/*{{{*/
     //cout << "exiting the thread, free window buf" << endl;
 }/*}}}*/
 
-int call_select(int fd, size_t delay_sec, size_t delay_usec)/*{{{*/
+int call_select(int fd, size_t delay_sec, size_t delay_nsec)/*{{{*/
 {
     fd_set rfds;            // stores which fd's should be watched for bytes available to read
-    struct timeval tv;      // stores timeout for select
+    struct timespec tv;      // stores timeout for select
     
     FD_ZERO(&rfds);         // clear fd's
     FD_SET(fd, &rfds);    // add m_fd to rfds
 
     // set delay
     tv.tv_sec = delay_sec;
-    tv.tv_usec = delay_usec;
+    tv.tv_nsec = delay_nsec;
 
-    cout << " wait " << endl;
-    return select(1, &rfds, nullptr, nullptr, &tv);   // will return on bytes available or timeout
+    return pselect(1, &rfds, nullptr, nullptr, &tv, nullptr);   // will return on bytes available or timeout
 }/*}}}*/
 
 size_t count(const string to_search, const string to_count){/*{{{*/
@@ -439,7 +441,7 @@ size_t count(const string to_search, const string to_count){/*{{{*/
     return count;
 }/*}}}*/
 
-size_t find_partial_end( const string & to_search, const string & to_find )
+size_t find_partial_end( const string & to_search, const string & to_find )/*{{{*/
 {
     size_t max_offset = std::min(to_search.size(),to_find.size());
     for(int offset = max_offset - 1; offset >= 0; offset--){
@@ -454,7 +456,7 @@ size_t find_partial_end( const string & to_search, const string & to_find )
             return offset + 1;
     }
     return 0;
-}
+}/*}}}*/
 
 void RadioManager::read_loop()/*{{{*/
 {
@@ -464,19 +466,29 @@ void RadioManager::read_loop()/*{{{*/
     static string in_data;
     string header((char *)(&HEADER),4);
     string footer((char *)(&FOOTER),4);
+
     while(is_open && (!end_thread || !to_ack.empty() || !to_resend.empty())){
         // read in new packet
-        while(!end_thread && is_open && call_select(m_fd, 0, 1000000)){    // while there are still bytes available or .5 sec passes
-            cout << "select was 1" << endl; // debug
-            size_t bytes_read = read(m_fd, read_buf, READ_BUF_SIZE);
+        cout << "wait " << endl;
+        while(!end_thread && is_open && call_select(m_fd, 0, 1200000000)){    // while there are still bytes available or .5 sec passes
+            //int ret = call_select(m_fd, 0, 0);
+            //cout << "select: " << ret << endl; // debug
+            int bytes_read = 0;
+            //if(ret > 0){
+                bytes_read = read(m_fd, read_buf, READ_BUF_SIZE);
+            //}
             cout << "bytes_read: " << bytes_read << endl;   // debug
+
+            if(bytes_read < 0)
+                continue;
 
             cout << "read_buf:" << endl;    // debug
             print_hex(read_buf, bytes_read); // debug
 
             in_data += string((char *)read_buf, bytes_read);
+
             cout << "in_data: " << endl; // debug
-            print_hex((byte*)in_data.c_str(), in_data.size());
+            print_hex((byte*)in_data.c_str(), in_data.size());  // debug
 
             if(bytes_read < 4)
                 continue;
@@ -551,6 +563,7 @@ void RadioManager::read_loop()/*{{{*/
             else
                 in_data.clear();
         }
+        cout << "select was 0" << endl;
     }
 }/*}}}*/
 
@@ -562,7 +575,7 @@ struct MsgPktID{
 
 void RadioManager::verify_crc(string data){/*{{{*/
     static CRC32 crc;
-    static vector<Packet> ack_resend_wait;
+    //static vector<Packet> ack_resend_wait;
 
     crc.reset();
     crc.add(data.c_str(),data.size() - 4);
