@@ -9,6 +9,7 @@ emulator
 *.swp
 *.swo
 *.swn
+*.swm
 *~
 .ycm*
 
