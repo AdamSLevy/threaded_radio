@@ -327,7 +327,8 @@ void RadioManager::write_loop()/*{{{*/
             send_window.push_back(pkt);
         }
         // from to_resend, remove the packets that were added to send_window
-        to_resend.erase(to_resend.begin(),to_resend.begin()+num_pkts_added);
+        if(num_pkts_added)
+            to_resend.erase(to_resend.begin(),to_resend.begin()+num_pkts_added);
         to_resend_mtx.unlock(); // MUTEX UNLOCK
 
         // now add the to_send packets
@@ -338,14 +339,17 @@ void RadioManager::write_loop()/*{{{*/
             send_window.push_back(pkt);
         }
         // from to_send, remove the packets that were added to send_window
-        to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
+        if(num_pkts_added)
+            to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
         to_send_mtx.unlock(); // MUTEX UNLOCK
 
+        /*
         // the packets in send_window will need to be acknowledged
         to_ack_mtx.lock();
         for( auto pkt : send_window )
             to_ack.push_back(pkt);
         to_ack_mtx.unlock();
+        */
 
 
         // write the packet data to the window buffer
@@ -399,7 +403,6 @@ void RadioManager::write_loop()/*{{{*/
             usleep(send_time);
         }
 
-        // populate send_window
         send_window.clear();
 
         // if nothing to send, wait until notify
@@ -436,73 +439,117 @@ size_t count(const string to_search, const string to_count){/*{{{*/
     return count;
 }/*}}}*/
 
+size_t find_partial_end( const string & to_search, const string & to_find )
+{
+    size_t max_offset = std::min(to_search.size(),to_find.size());
+    for(int offset = max_offset - 1; offset >= 0; offset--){
+        bool depth_partial = true;
+        for(int place = offset; place >= 0; place--){
+            if(to_search[to_search.size() - 1 - offset + place] != to_find[0 + place]){
+                depth_partial = false;
+                break;
+            }
+        }
+        if(depth_partial)
+            return offset + 1;
+    }
+    return 0;
+}
+
 void RadioManager::read_loop()/*{{{*/
 {
     static byte read_buf[READ_BUF_SIZE];
-    static byte * read_ptr = read_buf;
     static bool partial_pkt = false;
     static string current_pkt;
+    static string in_data;
     string header((char *)(&HEADER),4);
     string footer((char *)(&FOOTER),4);
     while(is_open && (!end_thread || !to_ack.empty() || !to_resend.empty())){
         // read in new packet
         while(!end_thread && is_open && call_select(m_fd, 0, 1000000)){    // while there are still bytes available or .5 sec passes
-            cout << "select was 1" << endl;
-            size_t bytes_read = read(m_fd, read_ptr, READ_BUF_SIZE - (read_ptr - read_buf));
-            cout << "bytes_read: " << bytes_read << endl;
-            read_ptr += bytes_read;
+            cout << "select was 1" << endl; // debug
+            size_t bytes_read = read(m_fd, read_buf, READ_BUF_SIZE);
+            cout << "bytes_read: " << bytes_read << endl;   // debug
+
+            cout << "read_buf:" << endl;    // debug
             print_hex(read_buf, bytes_read); // debug
-        }
-        //size_t bytes_read = read(m_fd, read_ptr, READ_BUF_SIZE - (read_ptr - read_buf));
-        //cout << "bytes_read: " << bytes_read << endl;
-        //read_ptr += bytes_read;
 
-        if(read_ptr - read_buf == 0)
-            continue;
-        string in_data((char *)read_buf, read_ptr-read_buf);
+            in_data += string((char *)read_buf, bytes_read);
+            cout << "in_data: " << endl; // debug
+            print_hex((byte*)in_data.c_str(), in_data.size());
+
+            if(bytes_read < 4)
+                continue;
+
+            size_t end_head_bytes = find_partial_end(in_data,header);
+
+            cout << "end head bytes " << end_head_bytes << endl;
 
 
-        size_t search_from = 0;
-        if(partial_pkt){
-            size_t footer_index = in_data.find(footer);
-            size_t next_header_index = in_data.find(header,0);
+            size_t search_from = 0;
+            if(partial_pkt){
+                cout << "has partial pkt" << endl; // debug
+                size_t footer_index = in_data.find(footer);
+                size_t next_header_index = in_data.find(header,0);
 
-            if(footer_index != string::npos){
-                if(next_header_index == string::npos || footer_index < next_header_index){
-                    current_pkt += string((char *)read_buf,footer_index);
-                    verify_crc(current_pkt);
+                if(footer_index != string::npos){
+                    if(next_header_index == string::npos || footer_index < next_header_index){
+                        current_pkt += string((char *)in_data.c_str(),footer_index);
+                        cout << "partial pkt completed, no next head, or foot < head" << endl;  // debug
+                        print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
+                        verify_crc(current_pkt);
+                        partial_pkt = false;
+                    } else{
+                        cout << "partial pkt bad: foot > head" << endl;                                     // debug
+                        print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
+                    }
+                } else if (next_header_index == string::npos){
+                    cout << "partial pkt appending..." << endl;                                     // debug
+                    print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
+                    current_pkt += in_data;
+                    partial_pkt = true;
+                } else{
+                    cout << "partial pkt bad footer not found"<< endl;                                     // debug
+                    print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
+                    //size_t end_foot_bytes = find_partial_end(current_pkt,footer);
+                    //print_hex((byte*)current_pkt.c_str(),current_pkt.size() - end_foot_bytes);
+                    //verify_crc(string(current_pkt,current_pkt.size() - end_foot_bytes));
                     partial_pkt = false;
                 }
-            } else if (next_header_index == string::npos){
-                current_pkt += in_data;
-                partial_pkt = true;
-            } else{
-                partial_pkt = false;
-            }
-            if(next_header_index != string::npos){
-                search_from = next_header_index;
-            }
-        }
-
-        size_t num_headers = count(in_data, header);
-
-        for(int i = 0; i < num_headers; i++){
-            size_t header_index = in_data.find(header);
-            size_t footer_index = in_data.find(footer,header_index);
-
-            size_t next_header_index = in_data.find(header,header_index+4);
-
-            if(footer_index != string::npos){
-                if(next_header_index == string::npos || footer_index < next_header_index){
-                    current_pkt = string((char *)(read_buf + header_index + 4), footer_index - header_index - 4);
-                    verify_crc(current_pkt);
+                if(next_header_index != string::npos){
+                    search_from = next_header_index;
                 }
-            } else if(next_header_index == string::npos){
-                current_pkt = string((char *)(read_buf + header_index + 4),read_ptr - (read_buf + header_index + 4));
-                partial_pkt = true;
             }
-            if(next_header_index != string::npos)
-                search_from = next_header_index;
+
+            size_t num_headers = count(in_data, header);
+            cout << "num_headers : " << num_headers << endl;
+
+            for(int i = 0; i < num_headers; i++){
+                size_t header_index = in_data.find(header);
+                size_t footer_index = in_data.find(footer,header_index);
+
+                size_t next_header_index = in_data.find(header,header_index+4);
+
+                if(footer_index != string::npos){
+                    if(next_header_index == string::npos || footer_index < next_header_index){
+                        cout << "for loop framed: " << endl; // debug
+                        print_hex((byte*)(in_data.c_str() + header_index + 4), footer_index - header_index - 4);    // debug
+                        current_pkt = string(in_data.c_str() + header_index + 4, footer_index - header_index - 4);
+                        verify_crc(current_pkt);
+                    }
+                } else if(next_header_index == string::npos){
+                    cout << "for loop start partial: " << endl; // debug
+                    print_hex((byte*)(in_data.c_str() + header_index + 4),in_data.size() - header_index - 4);
+                    current_pkt = string((char *)(in_data.c_str() + header_index + 4),in_data.size() - header_index - 4);
+                    partial_pkt = true;
+                }
+                if(next_header_index != string::npos)
+                    search_from = next_header_index;
+            }
+            if(end_head_bytes)
+                in_data = string(header,end_head_bytes);
+            else
+                in_data.clear();
         }
     }
 }/*}}}*/
@@ -511,6 +558,7 @@ struct MsgPktID{
     byte msg_id;
     byte pkt_id;
 };
+
 
 void RadioManager::verify_crc(string data){/*{{{*/
     static CRC32 crc;
@@ -523,6 +571,8 @@ void RadioManager::verify_crc(string data){/*{{{*/
     string hash((char *)h,4);
 
     if(hash == string(data.c_str() + data.size() - 4, 4)){
+        cout << "verified" << endl;
+        /*
         byte * data_ptr = (byte *)data.c_str();
         MsgPktID id;
         bool resent_ack = false;
@@ -619,7 +669,9 @@ void RadioManager::verify_crc(string data){/*{{{*/
         ack_resend_wait = to_ack;
         to_ack.clear();
         to_ack_mtx.unlock();
-    }
+    */
+    } else
+        cout << "verified" << endl;
 }/*}}}*/
 
 void RadioManager::request_ack_resend(){/*{{{*/
