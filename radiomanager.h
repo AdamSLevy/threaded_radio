@@ -86,6 +86,11 @@ struct Packet{
                               0x00,0x00,0x00,0x00,0x00,0xFE,0xFF,0xFF,0xFE};
 };
 
+struct MsgPktID{
+    byte msg_id;
+    byte pkt_id;
+};
+
 class RadioManager
 {
 public:
@@ -94,11 +99,18 @@ public:
     int setUpSerial();
     int closeSerial();
     int send(byte * data, const ulong numBytes);
-    //int sendCompressed(byte * data, const ulong numBytes);
+
+    bool send_in_progress();
 
 private:
     int m_wfd; // file descripter for serial port
+    mutex is_writing_mtx;
     int m_rfd;
+    mutex is_reading_mtx;
+
+    int m_ack_count;
+    int m_bad_crc;
+
     struct termios m_oldConfig;
     struct termios m_config;
     string m_ttyPortName;
@@ -120,12 +132,11 @@ private:
 
     // solely used by write_loop()
     vector<Packet> send_window;
-    byte * window_buf;
 
-    // mutexes
+    // WRITE
     void write_loop();
+    void wake_write_loop();
     thread write_th;
-
     condition_variable write_cv;    // used for waking up write_loop
     mutex write_cv_mtx;             // used by read_loop() and send() if write_loop doesn't own write_cr_mtx
                                     // which indicates that write_loop is waiting and not writing
@@ -135,6 +146,7 @@ private:
 
     void verify_crc(string data);
     void request_ack_resend();
+
 
     bool end_thread;
     bool is_open;

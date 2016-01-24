@@ -77,10 +77,10 @@ START:
     data.fileNum = 0;
 
     for(;;){
-//        for(int i = 0; i < 2048; i++){
-//            data.spec[i] = dist(gen);
-//        }
-        //data.fileNum++;
+        for(int i = 0; i < 2048; i++){
+            data.spec[i] = dist(gen);
+        }
+        data.fileNum++;
         int numBytes = radio.send((byte*)&data,sizeof(RadioData));
 
         if(numBytes>0){
@@ -101,9 +101,11 @@ START:
             goto START; // im a bad boy, but it works
         }
 
-        if(total_bytes > 50000){
+        if(total_bytes > 1000000){
             //cout << "Total Sent: " << total_bytes << endl;
-            sleep(5);
+            while(radio.send_in_progress()){};
+
+            radio.closeSerial();
             return 0;
         }
     }
