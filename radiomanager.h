@@ -97,7 +97,8 @@ public:
     //int sendCompressed(byte * data, const ulong numBytes);
 
 private:
-    int m_fd; // file descripter for serial port
+    int m_wfd; // file descripter for serial port
+    int m_rfd;
     struct termios m_oldConfig;
     struct termios m_config;
     string m_ttyPortName;

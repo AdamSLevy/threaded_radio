@@ -15,7 +15,8 @@ RadioManager::RadioManager(): HEADER(HEADER_HEX),FOOTER(FOOTER_HEX)/*{{{*/
 
     end_thread = false;
     is_open = false;
-    m_fd = -1;
+    m_wfd = -1;
+    m_rfd = -1;
     num_pkts = 0;
 
 }/*}}}*/
@@ -34,20 +35,21 @@ RadioManager::~RadioManager()/*{{{*/
 int RadioManager::setUpSerial()/*{{{*/
 {
     // open the port
-    m_fd = open(m_ttyPortName.c_str(), O_RDWR | O_NOCTTY );
+    m_wfd = open(m_ttyPortName.c_str(), O_WRONLY | O_NOCTTY );
+    m_rfd = open(m_ttyPortName.c_str(), O_RDONLY | O_NOCTTY );
     cout << "after open" << endl;
 
-    if(m_fd < 0){
+    if(m_wfd < 0){
         return OPEN_FAIL;
     }
 
     // check if valid serial port
-    if(!isatty(m_fd)){
+    if(!isatty(m_wfd)){
         return NOT_A_TTY;
     }
 
     // copy old config
-    if(tcgetattr(m_fd, &m_oldConfig) < 0){
+    if(tcgetattr(m_wfd, &m_oldConfig) < 0){
         return GET_CONFIG_FAIL;
     }
 
@@ -79,12 +81,21 @@ int RadioManager::setUpSerial()/*{{{*/
     }
 
     // apply config to port
-    if(tcsetattr(m_fd,TCSAFLUSH, &m_config) < 0){
+    if(tcsetattr(m_wfd,TCSAFLUSH, &m_config) < 0){
         return CONFIG_APPLY_FAIL;
     }
 
-    if(tcflush(m_fd, TCIOFLUSH) != 0 ){
-        cout << "flush issue" << endl;
+    // apply config to port
+    if(tcsetattr(m_rfd,TCSAFLUSH, &m_config) < 0){
+        cout << "m_rfd can't apply" << endl;
+        return CONFIG_APPLY_FAIL;
+    }
+
+    if(tcflush(m_wfd, TCIOFLUSH) != 0 ){
+        cout << "m_wfd flush issue" << endl;
+    }
+    if(tcflush(m_rfd, TCIOFLUSH) != 0 ){
+        cout << "m_rfd flush issue" << endl;
     }
 
     is_open = true;
@@ -100,20 +111,31 @@ int RadioManager::setUpSerial()/*{{{*/
 
 int RadioManager::closeSerial()/*{{{*/
 {
-    //fsync(m_fd);
+    //fsync(m_wfd);
     // revert to old config settings
     int exitCode = 0;
-    if(m_fd != -1 && is_open){
-        if(tcsetattr(m_fd,TCSAFLUSH, &m_oldConfig) < 0){
+    if(m_rfd != -1 && is_open){
+        if(tcsetattr(m_rfd,TCSAFLUSH, &m_oldConfig) < 0){
             exitCode |= CONFIG_APPLY_FAIL;
         }
-        if(close(m_fd) < 0){
+        if(close(m_rfd) < 0){
             exitCode |= CLOSE_FAIL;
         }
-        is_open = false;
-        end_thread = true;
-        m_fd = -1;
+        m_rfd = -1;
     }
+    if(m_wfd != -1 && is_open){
+        if(tcsetattr(m_wfd,TCSAFLUSH, &m_oldConfig) < 0){
+            exitCode |= CONFIG_APPLY_FAIL;
+        }
+        if(close(m_wfd) < 0){
+            exitCode |= CLOSE_FAIL;
+        }
+        m_wfd = -1;
+    }
+    is_open = false;
+    end_thread = true;
+
+    cout << "close exit: " << exitCode << endl; // debug
 
     return exitCode;
 }/*}}}*/
@@ -273,50 +295,9 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     return numSent;
 }/*}}}*/
 
-/*{{{*//* // send compressed
-int RadioManager::sendCompressed(byte * data, const ulong numBytes)
-{
-    ulong sizeDataCompressed = (numBytes * 1.1) + 12;
-    byte dataCompressed[sizeDataCompressed];
-    int z_result = compress( dataCompressed, &sizeDataCompressed, data, numBytes);
-    int numSent = -1;
-    if(Z_OK == z_result){
-        numSent = 0;
-        const int scale = 3; 
-        const int P_SIZE = scale*128;
-        byte * p_start;
-        ulong bytesRemaining = sizeDataCompressed;
-        for(unsigned int i = 0; i < sizeDataCompressed / P_SIZE + 1; i++){
-            if(tcdrain(m_fd) != 0){
-                int errsv = errno;
-                cout << "tcdrain: " << errsv << endl;
-                char buf[40];
-                strerror_r(errsv,buf,40);
-                cout << buf << endl;
-            }
-            usleep(scale*50000);
-            p_start = dataCompressed + i * P_SIZE;
-            int len = P_SIZE;
-            if(bytesRemaining < P_SIZE){
-                len = bytesRemaining;
-            }
-            m_crc.reset();
-            m_crc.add(p_start, len);
-            byte hash[m_crc.HashBytes];
-            m_crc.getHash(hash);
-            cout << m_crc.getHash() << endl;
-            numSent += write(m_fd, &HEADER, HEADER_SIZE);
-            numSent += write(m_fd, hash, m_crc.HashBytes);
-            numSent += write(m_fd, p_start, len);
-            bytesRemaining -= len;
-        }
-    }
-    return numSent;
-}*//*}}}*/
-
 void RadioManager::write_loop()/*{{{*/
 {
-    if(tcflush(m_fd, TCOFLUSH) != 0 ){
+    if(tcflush(m_wfd, TCOFLUSH) != 0 ){
         cout << "flush issue" << endl;
     }
     unique_lock<mutex> lck(write_cv_mtx);
@@ -377,7 +358,7 @@ void RadioManager::write_loop()/*{{{*/
                 size_t max_bytes = 500;
                 if(max_bytes > num_bytes_to_send)
                     max_bytes = num_bytes_to_send;
-                num_bytes_sent = write(m_fd,window_ptr,max_bytes);
+                num_bytes_sent = write(m_wfd,window_ptr,max_bytes);
                 if(num_bytes_sent < 0){
                     throw write_err;
                 }
@@ -391,14 +372,14 @@ void RadioManager::write_loop()/*{{{*/
             window_ptr += num_bytes_sent;
             //cout << "num_bytes_sent: " << num_bytes_sent << " total: " << bytes_sent << endl;
 
-            if(tcdrain(m_fd) != 0){
+            if(tcdrain(m_wfd) != 0){
                 int errsv = errno;
                 //cout << "tcdrain: " << errsv << endl;
                 char buf[40];
                 strerror_r(errsv,buf,40);
                 //cout << buf << endl;
             }
-            //if(tcflush(m_fd, TCOFLUSH) != 0 ){
+            //if(tcflush(m_wfd, TCOFLUSH) != 0 ){
                 //cout << "flush issue" << endl;
             //}
             size_t send_time = 1e6 * num_bytes_sent / (115200/9)+100000;
@@ -421,13 +402,21 @@ int call_select(int fd, size_t delay_sec, size_t delay_nsec)/*{{{*/
     struct timespec tv;      // stores timeout for select
     
     FD_ZERO(&rfds);         // clear fd's
-    FD_SET(fd, &rfds);    // add m_fd to rfds
+    FD_SET(fd, &rfds);    // add fd to rfds
 
     // set delay
     tv.tv_sec = delay_sec;
     tv.tv_nsec = delay_nsec;
 
-    return pselect(1, &rfds, nullptr, nullptr, &tv, nullptr);   // will return on bytes available or timeout
+    int ret = pselect(fd+1, &rfds, nullptr, nullptr, &tv, nullptr);   // will return on bytes available or timeout
+    if(ret < 0){
+        int errsv = errno;
+        cout << "pselect: " << errsv << endl;
+        char buf[40];
+        strerror_r(errsv,buf,40);
+        cout << buf << endl;
+    }
+    return ret;
 }/*}}}*/
 
 size_t count(const string to_search, const string to_count){/*{{{*/
@@ -466,17 +455,19 @@ void RadioManager::read_loop()/*{{{*/
     static string in_data;
     string header((char *)(&HEADER),4);
     string footer((char *)(&FOOTER),4);
+    int select_ret = 0;
 
     while(is_open && (!end_thread || !to_ack.empty() || !to_resend.empty())){
         // read in new packet
         cout << "wait " << endl;
-        while(!end_thread && is_open && call_select(m_fd, 0, 1200000000)){    // while there are still bytes available or .5 sec passes
-            //int ret = call_select(m_fd, 0, 0);
-            //cout << "select: " << ret << endl; // debug
+        select_ret = call_select(m_rfd, 2, 0);
+        cout << "select: " << select_ret << endl; // debug
+        while(!end_thread && is_open && select_ret > 0){    // while there are still bytes available or .5 sec passes
+            cout << "select: " << select_ret << endl; // debug
             int bytes_read = 0;
-            //if(ret > 0){
-                bytes_read = read(m_fd, read_buf, READ_BUF_SIZE);
-            //}
+            if(select_ret > 0){
+                bytes_read = read(m_rfd, read_buf, READ_BUF_SIZE);
+            }
             cout << "bytes_read: " << bytes_read << endl;   // debug
 
             if(bytes_read < 0)
@@ -537,6 +528,7 @@ void RadioManager::read_loop()/*{{{*/
             cout << "num_headers : " << num_headers << endl;
 
             for(int i = 0; i < num_headers; i++){
+                cout << "for loop " << i << endl;   // debug
                 size_t header_index = in_data.find(header);
                 size_t footer_index = in_data.find(footer,header_index);
 
@@ -562,8 +554,8 @@ void RadioManager::read_loop()/*{{{*/
                 in_data = string(header,end_head_bytes);
             else
                 in_data.clear();
+            select_ret = call_select(m_rfd, 0, 0);
         }
-        cout << "select was 0" << endl;
     }
 }/*}}}*/
 
