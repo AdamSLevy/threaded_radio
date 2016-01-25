@@ -6,9 +6,9 @@
 using std::printf;
 void print_hex(byte * data, size_t len)/*{{{*/
 {
-    int perLine = 20;
+    size_t perLine = 20;
     cout << "   0:  ";
-    for(int i = 0; i < len; i++){
+    for(size_t i = 0; i < len; i++){
         byte bb = data[i];
         byte hb = (bb&0xF0)>>4;
         byte lb = bb&0x0F;
@@ -91,7 +91,7 @@ size_t count(const string & to_search, const string & to_count){/*{{{*/
     size_t count = 0;
     if(to_search.size() < to_count.size())
         return 0;
-    for(int i = 0; i < to_search.size() - to_count.size(); i++){
+    for(size_t i = 0; i < to_search.size() - to_count.size(); i++){
         if(to_count == string(to_search.c_str()+i, to_count.size()))
             count++;
     }
@@ -258,7 +258,7 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
 
     size_t sizeDataCompressed = (numBytes * 1.1) + 12;
     byte dataCompressed[sizeDataCompressed];
-    int z_result = compress( dataCompressed, &sizeDataCompressed, data, numBytes);
+    int z_result = compress( dataCompressed, (uLongf *)&sizeDataCompressed, data, numBytes);
     size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
     /*}}}*/
     if(Z_OK == z_result && numPkts < MAX_ID){
@@ -356,7 +356,7 @@ void RadioManager::write_loop()/*{{{*/
 
         // resend packets get priority
         // add packets to send_window, until full or to_resend is empty
-        int num_pkts_added = 0;
+        size_t num_pkts_added = 0;
         to_resend_mtx.lock();  // MUTEX LOCK
         while(send_window.size() < NUM_PKTS_PER_ACK && num_pkts_added < to_resend.size()){
             Packet pkt = to_resend[num_pkts_added++];
@@ -528,6 +528,7 @@ void RadioManager::read_loop()/*{{{*/
 
             size_t search_from = 0;
             if(partial_pkt){
+                partial_pkt = false;
                 //cout << "has partial pkt" << endl; // debug
                 size_t footer_index = in_data.find(footer);
                 size_t next_header_index = in_data.find(header,0);
@@ -538,23 +539,36 @@ void RadioManager::read_loop()/*{{{*/
                         //cout << "partial pkt completed, no next head, or foot < head" << endl;  // debug
                         //print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
                         verify_crc(current_pkt);
-                        partial_pkt = false;
                     } else{
-                        //cout << "partial pkt bad: foot > head" << endl;                                     // debug
+                        //cout << "partial pkt bad: foot > head" << endl;                         // debug
                         //print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
+                        current_pkt += string((char *)in_data.c_str(), next_header_index);
+                        // since we couldn't find a footer it's likely that the footer was corrupted
+                        // so I pull off any footer bytes in the hopes that the pkt will be okay
+                        char bb = *current_pkt.end();
+                        while(bb == (char)0xFF || bb == (char)0xFE){
+                            current_pkt.pop_back();
+                            bb = *current_pkt.end();
+                        }
+                        verify_crc(current_pkt);
                     }
                 } else if(next_header_index == string::npos){
-                    //cout << "partial pkt appending..." << endl;                                     // debug
+                    //cout << "partial pkt appending..." << endl;                             // debug
                     //print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
                     current_pkt += in_data;
                     partial_pkt = true;
                 } else{
-                    //cout << "DROPPED PACKET partial pkt bad footer not found"<< endl;                                     // debug
-                    print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
-                    //size_t end_foot_bytes = find_partial_end(current_pkt,footer);
-                    //print_hex((byte*)current_pkt.c_str(),current_pkt.size() - end_foot_bytes);
-                    //verify_crc(string(current_pkt,current_pkt.size() - end_foot_bytes));
-                    partial_pkt = false;
+                    //cout << "DROPPED PACKET partial pkt bad footer not found"<< endl;     // debug
+                    //print_hex((byte*)current_pkt.c_str(),current_pkt.size());             // debug
+                    current_pkt += string((char *)in_data.c_str(), next_header_index);
+                    // since we couldn't find a footer it's likely that the footer was corrupted
+                    // so I pull off any footer bytes in the hopes that the pkt will be okay
+                    char bb = *current_pkt.end();
+                    while(bb == (char)0xFF || bb == (char)0xFE){
+                        current_pkt.pop_back();
+                        bb = *current_pkt.end();
+                    }
+                    verify_crc(current_pkt);
                 }
                 if(next_header_index != string::npos){
                     search_from = next_header_index;
@@ -564,11 +578,10 @@ void RadioManager::read_loop()/*{{{*/
             size_t num_headers = count(in_data, header);
             //cout << "num_headers : " << num_headers << endl;
 
-            for(int i = 0; i < num_headers; i++){
+            for(size_t i = 0; i < num_headers; i++){
                 //cout << "for loop " << i << endl;   // debug
-                size_t header_index = in_data.find(header);
+                size_t header_index = in_data.find(header,search_from);
                 size_t footer_index = in_data.find(footer,header_index);
-
                 size_t next_header_index = in_data.find(header,header_index+4);
 
                 if(footer_index != string::npos){
@@ -576,6 +589,17 @@ void RadioManager::read_loop()/*{{{*/
                         //cout << "for loop framed: " << endl; // debug
                         //print_hex((byte*)(in_data.c_str() + header_index + 4), footer_index - header_index - 4);    // debug
                         current_pkt = string(in_data.c_str() + header_index + 4, footer_index - header_index - 4);
+                        verify_crc(current_pkt);
+                    } else{
+                        current_pkt = string((char *)(in_data.c_str() + header_index + 4), next_header_index - header_index - 4);
+                        // since we couldn't find a footer it's likely that the footer was corrupted
+                        // so I pull off any footer bytes in the hopes that the pkt will be okay
+                        char bb = *current_pkt.end();
+                        while(bb == (char)0xFF || bb == (char)0xFE){
+                            current_pkt.pop_back();
+                            bb = *current_pkt.end();
+                        }
+
                         verify_crc(current_pkt);
                     }
                 } else if(next_header_index == string::npos){
@@ -585,6 +609,16 @@ void RadioManager::read_loop()/*{{{*/
                     partial_pkt = true;
                 } else{
                     //cout << "MISFRAMED PACKET!" << endl;
+                    current_pkt = string((char *)(in_data.c_str() + header_index + 4), next_header_index - header_index - 4);
+                    // since we couldn't find a footer it's likely that the footer was corrupted
+                    // so I pull off any footer bytes in the hopes that the pkt will be okay
+                    char bb = *current_pkt.end();
+                    while(bb == (char)0xFF || bb == (char)0xFE){
+                        current_pkt.pop_back();
+                        bb = *current_pkt.end();
+                    }
+
+                    verify_crc(current_pkt);
                 }
                 if(next_header_index != string::npos)
                     search_from = next_header_index;

@@ -1,8 +1,13 @@
 #pragma once
 
+#ifndef __APPLE__
 //#define DEFAULT_TTY_PORT_NAME "/dev/ttyS1"
+#define DEFAULT_TTY_PORT_NAME "/dev/ttyUSB1"
+#endif
 
+#ifdef __APPLE__
 #define DEFAULT_TTY_PORT_NAME "/dev/cu.usbserial-A103N2XP"
+#endif
 
 // set up serial error codes
 #define OPEN_SUCCESS        0x00
