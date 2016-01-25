@@ -295,13 +295,13 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
 
         // create remaining data filled packets /*{{{*/ 
         for(pktID = 1; pktID < numPkts+1; pktID++){
-            int data_len = PKT_DATA_SIZE;
+            size_t data_len = PKT_DATA_SIZE;
             if(bytesRemaining < PKT_DATA_SIZE)
                 data_len = bytesRemaining;
             bytesRemaining -= data_len;
 
             pkt_data = pkt_to_send[pktID].data;
-            byte pkt_len = PKT_SIZE(data_len);
+            size_t pkt_len = PKT_SIZE(data_len);
             pkt_to_send[pktID].len = pkt_len;
 
             // ID
