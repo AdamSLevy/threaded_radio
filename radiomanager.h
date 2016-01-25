@@ -31,6 +31,7 @@
 #include "zlib.h" // compression lib
 #include "crc32.h"
 #include <vector>
+#include <deque>
 #include <mutex>
 #include <thread>
 #include <condition_variable>
@@ -43,6 +44,7 @@ using std::thread;
 using std::unique_lock;
 using std::condition_variable;
 using std::vector;
+using std::deque;
 using std::string;
 using std::exception;
 
@@ -128,7 +130,7 @@ private:
     mutex to_send_mtx;
 
     // populated by write_loop(), emptied by read_loop()
-    vector<Packet> to_ack;
+    deque<Packet> to_ack;
     mutex to_ack_mtx;
 
     // populated by read_loop(), empted by write_loop()

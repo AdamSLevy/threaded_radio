@@ -283,7 +283,7 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
 
         m_crc.reset();
         m_crc.add(dataCompressed,sizeDataCompressed);
-        m_crc.getHash(pkt_data+PKT_DATA_OFFSET+3);
+        m_crc.getHash(pkt_data+PKT_DATA_OFFSET+1);
 
         // PKT CRC
         m_crc.reset();
@@ -379,13 +379,11 @@ void RadioManager::write_loop()/*{{{*/
             to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
         to_send_mtx.unlock(); // MUTEX UNLOCK
 
-        /*
         // the packets in send_window will need to be acknowledged
         to_ack_mtx.lock();
         for( auto pkt : send_window )
             to_ack.push_back(pkt);
         to_ack_mtx.unlock();
-        */
 
 
         // write the packet data to the window buffer
@@ -546,9 +544,11 @@ void RadioManager::read_loop()/*{{{*/
                         // since we couldn't find a footer it's likely that the footer was corrupted
                         // so I pull off any footer bytes in the hopes that the pkt will be okay
                         char bb = *current_pkt.end();
-                        while(bb == (char)0xFF || bb == (char)0xFE){
+                        size_t n = 0;
+                        while((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
                             current_pkt.pop_back();
                             bb = *current_pkt.end();
+                            n++;
                         }
                         verify_crc(current_pkt);
                     }
@@ -564,9 +564,11 @@ void RadioManager::read_loop()/*{{{*/
                     // since we couldn't find a footer it's likely that the footer was corrupted
                     // so I pull off any footer bytes in the hopes that the pkt will be okay
                     char bb = *current_pkt.end();
-                    while(bb == (char)0xFF || bb == (char)0xFE){
+                    size_t n = 0;
+                    while((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
                         current_pkt.pop_back();
                         bb = *current_pkt.end();
+                        n++;
                     }
                     verify_crc(current_pkt);
                 }
@@ -595,29 +597,32 @@ void RadioManager::read_loop()/*{{{*/
                         // since we couldn't find a footer it's likely that the footer was corrupted
                         // so I pull off any footer bytes in the hopes that the pkt will be okay
                         char bb = *current_pkt.end();
-                        while(bb == (char)0xFF || bb == (char)0xFE){
+                        size_t n = 0;
+                        while((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
                             current_pkt.pop_back();
                             bb = *current_pkt.end();
+                            n++;
                         }
-
                         verify_crc(current_pkt);
                     }
                 } else if(next_header_index == string::npos){
                     //cout << "for loop start partial: " << endl; // debug
                     //print_hex((byte*)(in_data.c_str() + header_index + 4),in_data.size() - header_index - 4);
                     current_pkt = string((char *)(in_data.c_str() + header_index + 4),in_data.size() - header_index - 4);
-                    partial_pkt = true;
+                    if(current_pkt.size() > 0)
+                        partial_pkt = true;
                 } else{
                     //cout << "MISFRAMED PACKET!" << endl;
                     current_pkt = string((char *)(in_data.c_str() + header_index + 4), next_header_index - header_index - 4);
                     // since we couldn't find a footer it's likely that the footer was corrupted
                     // so I pull off any footer bytes in the hopes that the pkt will be okay
                     char bb = *current_pkt.end();
-                    while(bb == (char)0xFF || bb == (char)0xFE){
+                    size_t n = 0;
+                    while((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
                         current_pkt.pop_back();
                         bb = *current_pkt.end();
+                        n++;
                     }
-
                     verify_crc(current_pkt);
                 }
                 if(next_header_index != string::npos)
@@ -635,34 +640,35 @@ void RadioManager::read_loop()/*{{{*/
 
 void RadioManager::verify_crc(string data){/*{{{*/
     static CRC32 crc;
-    //static vector<Packet> ack_resend_wait;
 
+    string received_crc = string(data.c_str() + data.size() - 4, 4);
+    data.resize(data.size() - 4);   // remove crc from data
+
+    // compute crc
     crc.reset();
-    crc.add(data.c_str(),data.size() - 4);
+    crc.add(data.c_str(),data.size());
     byte h[4];
     crc.getHash(h);
-    string hash((char *)h,4);
+    string computed_crc((char *)h,4);
 
-    if(hash == string(data.c_str() + data.size() - 4, 4)){
-        cout << "verified" << endl;
-        m_ack_count++;
-        /*
-        byte * data_ptr = (byte *)data.c_str();
+    if(computed_crc == received_crc){
+        cout << "verified" << endl;     // debug
+        m_ack_count++;                  // debug
+
+        // parse data into list of acknowledged packets
         MsgPktID id;
-        bool resent_ack = false;
-        if(data_ptr[0] == 0xFF){
-            resent_ack = true;
-        }
-        id.msg_id = data_ptr[0 + resent_ack];
-        id.pkt_id = data_ptr[1 + resent_ack];
-        byte current_msg_id = data_ptr[0 + resent_ack];
 
-        vector<MsgPktID> ack_id;
+        id.msg_id = (byte) data[0];
+        id.pkt_id = (byte) data[1];
+        byte current_msg_id = (byte) data[0];
+
+        vector<MsgPktID> ack_id;    // to hold list of acknowledged msg pkt ids
         ack_id.push_back(id);
-        for(int i = 2 + resent_ack; i < data.size(); i++){
-            byte bb = data_ptr[i];
+        for(size_t i = 2; i < data.size(); i++){
+            byte bb = (byte) data[i];
+            // change msg id
             if(bb == 0xFF){
-                current_msg_id = data_ptr[i+1];
+                current_msg_id = (byte) data[i+1];
                 i++;
                 continue;
             }
@@ -671,73 +677,46 @@ void RadioManager::verify_crc(string data){/*{{{*/
             ack_id.push_back(id);
         }
 
-        if(!resent_ack){
-            to_ack_mtx.lock();
-            bool resend_req = false;
-            for(auto pkt : to_ack){
-                id.msg_id = pkt.data[ID_OFFSET];
-                id.pkt_id = pkt.data[ID_OFFSET+1];
+        // find acknowledged packets
+        to_ack_mtx.lock();
 
-                bool has_ack = false;
-                for( auto p_id : ack_id ){
-                    if( p_id.msg_id == id.msg_id &&
-                            p_id.pkt_id == id.pkt_id ){
-                        has_ack = true;
-                        break;
-                    }
+        size_t last_ack_index = 0;
+        for(size_t i = 0; i < to_ack.size(); i++){
+            id.msg_id = to_ack[i].data[ID_OFFSET];
+            id.pkt_id = to_ack[i].data[ID_OFFSET+1];
+            for( auto p_id : ack_id ){
+                if( p_id.pkt_id == id.pkt_id &&
+                        p_id.msg_id == id.msg_id ){
+                    to_ack[i].send_count = 0;   // mark for removal
+                    cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                    last_ack_index = i;
                 }
-                if(!has_ack){
-                    if( !resend_req ){
-                        to_resend_mtx.lock();
-                        resend_req = true;
-                    }
-                    to_resend.push_back(pkt);
-                }
-            }
-            to_ack.clear();
-            if(resend_req){
-                to_resend_mtx.unlock();
-                // wake up write loop
-                wake_write_loop();
-            }
-            to_ack_mtx.unlock();
-        } else{
-            bool resend_req = false;
-            for(auto pkt : ack_resend_wait){
-                id.msg_id = pkt.data[ID_OFFSET];
-                id.pkt_id = pkt.data[ID_OFFSET+1];
-
-                bool has_ack = false;
-                for( auto p_id : ack_id ){
-                    if( p_id.msg_id == id.msg_id &&
-                            p_id.pkt_id == id.pkt_id ){
-                        has_ack = true;
-                        break;
-                    }
-                }
-                if(!has_ack){
-                    if( !resend_req ){
-                        to_resend_mtx.lock();
-                        resend_req = true;
-                    }
-                    to_resend.push_back(pkt);
-                }
-            }
-            ack_resend_wait.clear();
-            if(resend_req){
-                to_resend_mtx.unlock();
-                // wake up write loop
-                wake_write_loop();
             }
         }
-    } else if(!to_ack.empty()){
-        request_ack_resend();
-
-        to_ack_mtx.lock();
-        ack_resend_wait = to_ack;
-        to_ack.clear();
+        to_resend_mtx.lock();
+        for(size_t i = 0; i < last_ack_index; i++){
+            if(to_ack[i].send_count > 0){
+                to_ack[i].send_count--;
+                to_resend.push_back(to_ack[i]);
+                id.msg_id = to_ack[i].data[ID_OFFSET];      // debug
+                id.pkt_id = to_ack[i].data[ID_OFFSET+1];    // debug
+                cout << "\t queued for resend msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+            }
+        }
+        to_resend_mtx.unlock();
+        to_ack.erase(to_ack.begin(), to_ack.begin() + last_ack_index + 1);
+        cout << "to_ack remaining" << endl;
+        for( auto pkt : to_ack ){
+            id.msg_id = pkt.data[ID_OFFSET];
+            id.pkt_id = pkt.data[ID_OFFSET+1];
+            cout << "\t msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+        }
         to_ack_mtx.unlock();
-    */
+
+        cout << endl; // debug
+
+        wake_write_loop();
+
     } else{
         m_bad_crc++;
         cout << "not verified" << endl;
