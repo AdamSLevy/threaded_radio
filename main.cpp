@@ -56,8 +56,9 @@ START:
             cout << "Try again? [y/n]: ";
             cin >> in;
             cout << endl;
-            if(in=='Y'||in=='N')
+            if(in=='Y'||in=='N'){
                 in+='A'-'a';
+            }
             if(in!='y' && in!='n'){
                 cout << "invalid" << endl << endl;
                 valid = false;

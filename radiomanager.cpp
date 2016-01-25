@@ -61,8 +61,9 @@ void print_pkt(Packet pkt){/*{{{*/
 // V************** helper NON RadioManager functions *************************************V/*{{{*/
 int call_select(int fd, size_t delay_sec, size_t delay_nsec)/*{{{*/
 {
-    if(fd < 0)
+    if(fd < 0){
         return -1;
+    }
     fd_set rfds;            // stores which fd's should be watched for bytes available to read
     struct timespec tv;      // stores timeout for select
     
@@ -89,11 +90,13 @@ int call_select(int fd, size_t delay_sec, size_t delay_nsec)/*{{{*/
 
 size_t count(const string & to_search, const string & to_count){/*{{{*/
     size_t count = 0;
-    if(to_search.size() < to_count.size())
+    if(to_search.size() < to_count.size()){
         return 0;
+    }
     for(size_t i = 0; i < to_search.size() - to_count.size(); i++){
-        if(to_count == string(to_search.c_str()+i, to_count.size()))
+        if(to_count == string(to_search.c_str()+i, to_count.size())){
             count++;
+        }
     }
     return count;
 }/*}}}*/
@@ -109,8 +112,9 @@ size_t find_partial_end( const string & to_search, const string & to_find )/*{{{
                 break;
             }
         }
-        if(depth_partial)
+        if(depth_partial){
             return offset + 1;
+        }
     }
     return 0;
 }/*}}}*/
@@ -139,8 +143,9 @@ RadioManager::~RadioManager()/*{{{*/
 
 int RadioManager::setUpSerial()/*{{{*/
 {
-    if(is_open)
+    if(is_open){
         closeSerial();
+    }
 
     // open the port
     m_wfd = open(m_ttyPortName.c_str(), O_WRONLY | O_NOCTTY );
@@ -250,11 +255,13 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     static byte * foot_ptr = (byte *)(&FOOTER);
     
     int numSent = -1;
-    if(!is_open)
+    if(!is_open){
         return numSent;
+    }
 
-    if(msgID == MAX_ID)
+    if(msgID == MAX_ID){
         msgID = 0;
+    }
 
     size_t sizeDataCompressed = (numBytes * 1.1) + 12;
     byte dataCompressed[sizeDataCompressed];
@@ -263,8 +270,10 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     /*}}}*/
     if(Z_OK == z_result && numPkts < MAX_ID){
         // set up 
-        if((byte) numPkts == MAX_ID)
+        if((byte) numPkts == MAX_ID){
             return -1;
+        }
+
         size_t numTotalBytesForPkts = MSG_SIZE(sizeDataCompressed);
         
         size_t bytesRemaining = sizeDataCompressed;
@@ -296,8 +305,9 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         // create remaining data filled packets /*{{{*/ 
         for(pktID = 1; pktID < numPkts+1; pktID++){
             size_t data_len = PKT_DATA_SIZE;
-            if(bytesRemaining < PKT_DATA_SIZE)
+            if(bytesRemaining < PKT_DATA_SIZE){
                 data_len = bytesRemaining;
+            }
             bytesRemaining -= data_len;
 
             pkt_data = pkt_to_send[pktID].data;
@@ -318,8 +328,9 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
 
             // FOOTER
             if(data_len < PKT_DATA_SIZE){
-                for(int i = 0; i < FOOTER_SIZE; i++)
+                for(int i = 0; i < FOOTER_SIZE; i++){
                     pkt_data[FOOTER_OFFSET(data_len) + i]=foot_ptr[i];
+                }
             }
         }
         /*}}}*/
@@ -346,8 +357,9 @@ void RadioManager::write_loop()/*{{{*/
     unique_lock<mutex> lck(write_cv_mtx);
     while( is_open ){
         // if nothing to send, wait until notify
-        while(to_send.empty() && to_resend.empty() && send_window.empty()) 
+        while(to_send.empty() && to_resend.empty() && send_window.empty()){
             write_cv.wait(lck);
+        }
 
         if(!is_open){
             //cout << "write loop exit top" << endl; // debug
@@ -363,8 +375,9 @@ void RadioManager::write_loop()/*{{{*/
             send_window.push_back(pkt);
         }
         // from to_resend, remove the packets that were added to send_window
-        if(num_pkts_added)
+        if(num_pkts_added){
             to_resend.erase(to_resend.begin(),to_resend.begin()+num_pkts_added);
+        }
         to_resend_mtx.unlock(); // MUTEX UNLOCK
 
         // now add the to_send packets
@@ -375,14 +388,16 @@ void RadioManager::write_loop()/*{{{*/
             send_window.push_back(pkt);
         }
         // from to_send, remove the packets that were added to send_window
-        if(num_pkts_added)
+        if(num_pkts_added){
             to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
+        }
         to_send_mtx.unlock(); // MUTEX UNLOCK
 
         // the packets in send_window will need to be acknowledged
         to_ack_mtx.lock();
-        for( auto pkt : send_window )
+        for( auto pkt : send_window ){
             to_ack.push_back(pkt);
+        }
         to_ack_mtx.unlock();
 
 
@@ -406,12 +421,14 @@ void RadioManager::write_loop()/*{{{*/
         string haystack((char*)window_buf, num_bytes_to_send);
         string needle;
         needle.resize(3);
-        for(auto &c : needle)
+        for(auto &c : needle){
             c = '+';
+        }
 
         size_t esc_loc = haystack.find(needle);
-        if(esc_loc)
+        if(esc_loc){
             cout << "!!!! escape code present ~~~ " << endl;
+        }
         */
 
 
@@ -420,8 +437,9 @@ void RadioManager::write_loop()/*{{{*/
             int num_bytes_sent = 0;
             size_t max_bytes = 500;
 
-            if(max_bytes > num_bytes_to_send)
+            if(max_bytes > num_bytes_to_send){
                 max_bytes = num_bytes_to_send;
+            }
 
             is_writing_mtx.lock();
             num_bytes_sent = write(m_wfd,window_ptr,max_bytes);
@@ -625,13 +643,15 @@ void RadioManager::read_loop()/*{{{*/
                     }
                     verify_crc(current_pkt);
                 }
-                if(next_header_index != string::npos)
+                if(next_header_index != string::npos){
                     search_from = next_header_index;
+                }
             }
-            if(end_head_bytes)
+            if(end_head_bytes){
                 in_data = string(header,end_head_bytes);
-            else
+            } else{
                 in_data.clear();
+            }
             select_ret = call_select(m_rfd, 2, 0);
         }
     }
