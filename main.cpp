@@ -3,6 +3,7 @@
 #include <chrono>
 #include <unistd.h>
 #include <random>
+#include <signal.h>
 
 using std::cout;
 using std::cin;
@@ -34,11 +35,25 @@ struct RadioData{
     float spec[2048];
 };
 
+RadioManager radio;
+
+void clean_up(int s){
+    cout << "closing radio" << endl;
+    radio.close_serial();
+    exit(0);
+}
+
 int main(){
-    RadioManager radio;
     RadioData data;
     std::default_random_engine gen;
     std::uniform_real_distribution<float> dist(0.0,100.0);
+
+    struct sigaction sig;
+    sig.sa_handler = clean_up;
+    sigemptyset(&sig.sa_mask);
+    sig.sa_flags = 0;
+
+    sigaction(SIGINT,&sig,NULL);
 
     cout << sizeof(data) << endl;
 
@@ -47,7 +62,7 @@ int main(){
 
 START:
     cout << "hello" << endl;
-    errorCode = radio.setUpSerial();
+    errorCode = radio.open_serial();
     cout << "Serial setup code: " << errorCode << endl << endl;
     while(errorCode != 0){
         char in;
@@ -67,8 +82,8 @@ START:
             }
         }
         if(in == 'y'){
-            radio.closeSerial();
-            errorCode = radio.setUpSerial();
+            radio.close_serial();
+            errorCode = radio.open_serial();
         } else{
             exit(0);
         }
@@ -82,7 +97,7 @@ START:
             data.spec[i] = dist(gen);
         }
         data.fileNum++;
-        int numBytes = radio.send((byte*)&data,sizeof(RadioData));
+        int numBytes = radio.queue_data((byte*)&data,sizeof(RadioData));
 
         if(numBytes>0){
             total_bytes += numBytes;
@@ -98,15 +113,15 @@ START:
             //cout << endl << endl;
         } else{
             cout << "Failed to send! \n";
-            errorCode = radio.closeSerial();
+            errorCode = radio.close_serial();
             goto START; // im a bad boy, but it works
         }
 
-        if(total_bytes > 1000000){
+        if(total_bytes > 10000000){
             //cout << "Total Sent: " << total_bytes << endl;
             while(radio.send_in_progress()){};
 
-            radio.closeSerial();
+            radio.close_serial();
             return 0;
         }
     }

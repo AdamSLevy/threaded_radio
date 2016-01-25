@@ -115,25 +115,32 @@ class RadioManager
 public:
     RadioManager();
     ~RadioManager();
-    int setUpSerial();
-    int closeSerial();
-    int send(byte * data, const ulong numBytes);
+    int open_serial();
+    int open_serial(string port_name);
+    int close_serial();
+    int queue_data(byte * data, const ulong numBytes);
+
+    // this will clear all data and stop transmitions but leave the serial port open
+    // transmittion will resume the next time queue_data is called
+    void clear_queued_data();
 
     bool send_in_progress();
 
 private:
-    int m_wfd; // file descripter for serial port
-    mutex is_writing_mtx;
+    // file descriptors and their mutexes
+    // mutexes are necessary to prevent closing the port during a read/write call
+    int m_wfd;
+    mutex is_writing_mtx;   // used during write call
     int m_rfd;
-    mutex is_reading_mtx;
+    mutex is_reading_mtx;   // used during read call
 
-    int m_ack_count;
-    int m_bad_crc;
+    int m_ack_count;        // debug
+    int m_bad_crc;          // debug
 
-    struct termios m_oldConfig;
-    struct termios m_config;
-    string m_ttyPortName;
-    CRC32 m_crc;
+    struct termios m_oldConfig; // stores previous configuration
+    struct termios m_config;    // stores existing configuration
+    string m_port_name;         // stores the port name/path i.e. "/dev/ttyUSB0"
+
     const ulong HEADER;
     const ulong FOOTER;
 
@@ -145,7 +152,7 @@ private:
     deque<Packet> to_ack;
     mutex to_ack_mtx;
 
-    // populated by read_loop(), empted by write_loop()
+    // populated by read_loop(), empted by write_loop(), resends are given priority by write_loop
     vector<Packet> to_resend;
     mutex to_resend_mtx;
 
@@ -166,8 +173,6 @@ private:
     void verify_crc(string data);
     void request_ack_resend();
 
-
-    bool end_thread;
     bool is_open;
 
     int num_pkts;

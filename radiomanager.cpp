@@ -123,33 +123,38 @@ size_t find_partial_end( const string & to_search, const string & to_find )/*{{{
 // V************** RadioManager member functions *******************************************V
 RadioManager::RadioManager(): HEADER(HEADER_HEX),FOOTER(FOOTER_HEX)/*{{{*/
 {
-    m_ttyPortName = DEFAULT_TTY_PORT_NAME;
+    m_port_name = DEFAULT_TTY_PORT_NAME;
 
-    end_thread = false;
     is_open = false;
     m_wfd = -1;
     m_rfd = -1;
-    num_pkts = 0;
+    num_pkts = 0;       // debug
 
 }/*}}}*/
 
 RadioManager::~RadioManager()/*{{{*/
 {
-    closeSerial();
+    close_serial();
     cout << " num pkts: " << num_pkts << endl;  // debug
     cout << " num acks received: " << m_ack_count << endl;  // debug
     cout << " num bad crc : " << m_bad_crc << endl; // debug
 }/*}}}*/
 
-int RadioManager::setUpSerial()/*{{{*/
+int RadioManager::open_serial( string port_name )/*{{{*/
+{
+    m_port_name = port_name;
+    return open_serial();
+}/*}}}*/
+
+int RadioManager::open_serial()/*{{{*/
 {
     if(is_open){
-        closeSerial();
+        close_serial();
     }
 
     // open the port
-    m_wfd = open(m_ttyPortName.c_str(), O_WRONLY | O_NOCTTY );
-    m_rfd = open(m_ttyPortName.c_str(), O_RDONLY | O_NOCTTY );
+    m_wfd = open(m_port_name.c_str(), O_WRONLY | O_NOCTTY );
+    m_rfd = open(m_port_name.c_str(), O_RDONLY | O_NOCTTY );
     cout << "after open" << endl; // debug
 
     if(m_wfd < 0 || m_rfd < 0){
@@ -206,7 +211,7 @@ int RadioManager::setUpSerial()/*{{{*/
     return OPEN_SUCCESS;
 }/*}}}*/
 
-int RadioManager::closeSerial()/*{{{*/
+int RadioManager::close_serial()/*{{{*/
 {
     unique_lock<mutex> rlck(is_reading_mtx);    // guarantees release on exit.
     unique_lock<mutex> wlck(is_writing_mtx);    // guarantees release on exit.
@@ -249,36 +254,37 @@ void RadioManager::wake_write_loop()/*{{{*/
     }
 }/*}}}*/
 
-int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
+int RadioManager::queue_data(byte * data, const ulong num_bytes)/*{{{*/
 {
     static byte msgID = 0;/*{{{*/
-    static byte * foot_ptr = (byte *)(&FOOTER);
+    static const byte * foot_ptr = (byte *)(&FOOTER);
+    CRC32 crc;
     
-    int numSent = -1;
+    int num_sent = -1;
     if(!is_open){
-        return numSent;
+        return num_sent;
     }
 
     if(msgID == MAX_ID){
         msgID = 0;
     }
 
-    size_t sizeDataCompressed = (numBytes * 1.1) + 12;
-    byte dataCompressed[sizeDataCompressed];
-    int z_result = compress( dataCompressed, (uLongf *)&sizeDataCompressed, data, numBytes);
-    size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
+    size_t size_data_compressed = (num_bytes * 1.1) + 12;
+    byte data_compressed[size_data_compressed];
+    int z_result = compress( data_compressed, (uLongf *)&size_data_compressed, data, num_bytes);
+    size_t num_pkts = size_data_compressed / PKT_DATA_SIZE + 1;
     /*}}}*/
-    if(Z_OK == z_result && numPkts < MAX_ID){
+    if(Z_OK == z_result && num_pkts < MAX_ID){
         // set up 
-        if((byte) numPkts == MAX_ID){
+        if((byte) num_pkts == MAX_ID){
             return -1;
         }
 
-        size_t numTotalBytesForPkts = MSG_SIZE(sizeDataCompressed);
+        size_t num_total_bytes_to_send = MSG_SIZE(size_data_compressed);
         
-        size_t bytesRemaining = sizeDataCompressed;
+        size_t bytes_remaining = size_data_compressed;
         byte pktID = 0;
-        Packet * pkt_to_send = new Packet[numPkts+1];
+        Packet * pkt_to_send = new Packet[num_pkts+1];
 
         // create HEAD PKT/*{{{*/
         byte * pkt_data = pkt_to_send[0].data;
@@ -288,27 +294,27 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         pkt_data[ID_OFFSET+1]=pktID;
 
         // DATA: number of packets and compressed data crc
-        pkt_data[PKT_DATA_OFFSET] = (byte)numPkts;
+        pkt_data[PKT_DATA_OFFSET] = (byte)num_pkts;
 
-        m_crc.reset();
-        m_crc.add(dataCompressed,sizeDataCompressed);
-        m_crc.getHash(pkt_data+PKT_DATA_OFFSET+1);
+        crc.reset();
+        crc.add(data_compressed,size_data_compressed);
+        crc.getHash(pkt_data+PKT_DATA_OFFSET+1);
 
         // PKT CRC
-        m_crc.reset();
-        m_crc.add(pkt_data+ID_OFFSET,ID_SIZE + HEAD_PKT_DATA_SIZE);
-        m_crc.getHash(pkt_data+CRC_OFFSET(HEAD_PKT_DATA_SIZE));
+        crc.reset();
+        crc.add(pkt_data+ID_OFFSET,ID_SIZE + HEAD_PKT_DATA_SIZE);
+        crc.getHash(pkt_data+CRC_OFFSET(HEAD_PKT_DATA_SIZE));
 
         pkt_to_send[pktID].len = HEAD_PKT_SIZE;
         /*}}}*/
 
         // create remaining data filled packets /*{{{*/ 
-        for(pktID = 1; pktID < numPkts+1; pktID++){
+        for(pktID = 1; pktID < num_pkts+1; pktID++){
             size_t data_len = PKT_DATA_SIZE;
-            if(bytesRemaining < PKT_DATA_SIZE){
-                data_len = bytesRemaining;
+            if(bytes_remaining < PKT_DATA_SIZE){
+                data_len = bytes_remaining;
             }
-            bytesRemaining -= data_len;
+            bytes_remaining -= data_len;
 
             pkt_data = pkt_to_send[pktID].data;
             size_t pkt_len = PKT_SIZE(data_len);
@@ -319,12 +325,12 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
             pkt_data[ID_OFFSET+1]=pktID;
 
             // DATA
-            memcpy(pkt_data+PKT_DATA_OFFSET,dataCompressed+(pktID-1)*PKT_DATA_SIZE, data_len);
+            memcpy(pkt_data+PKT_DATA_OFFSET,data_compressed+(pktID-1)*PKT_DATA_SIZE, data_len);
 
             // PKT CRC
-            m_crc.reset();
-            m_crc.add(pkt_data+ID_OFFSET,data_len+ID_SIZE);
-            m_crc.getHash(pkt_data+CRC_OFFSET(data_len));
+            crc.reset();
+            crc.add(pkt_data+ID_OFFSET,data_len+ID_SIZE);
+            crc.getHash(pkt_data+CRC_OFFSET(data_len));
 
             // FOOTER
             if(data_len < PKT_DATA_SIZE){
@@ -336,19 +342,19 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         /*}}}*/
 
         // copy pkts to shared mem
-        to_send_mtx.lock();      // MUTEX LOCK
-        for(pktID = 0; pktID < numPkts+1; pktID++){
+        to_send_mtx.lock();
+        for(pktID = 0; pktID < num_pkts+1; pktID++){
             to_send.push_back(pkt_to_send[pktID]);
         }
-        to_send_mtx.unlock();    // MUTEX UNLOCK
+        to_send_mtx.unlock();
 
         wake_write_loop();
 
         delete [] pkt_to_send;
-        numSent = numTotalBytesForPkts;
+        num_sent = num_total_bytes_to_send;
         msgID++;
     }
-    return numSent;
+    return num_sent;
 }/*}}}*/
 
 void RadioManager::write_loop()/*{{{*/
@@ -366,32 +372,30 @@ void RadioManager::write_loop()/*{{{*/
             return;
         }
 
-        // resend packets get priority
+        // RESEND packets get priority
         // add packets to send_window, until full or to_resend is empty
         size_t num_pkts_added = 0;
-        to_resend_mtx.lock();  // MUTEX LOCK
+        to_resend_mtx.lock();
         while(send_window.size() < NUM_PKTS_PER_ACK && num_pkts_added < to_resend.size()){
             Packet pkt = to_resend[num_pkts_added++];
             send_window.push_back(pkt);
         }
-        // from to_resend, remove the packets that were added to send_window
         if(num_pkts_added){
             to_resend.erase(to_resend.begin(),to_resend.begin()+num_pkts_added);
         }
-        to_resend_mtx.unlock(); // MUTEX UNLOCK
+        to_resend_mtx.unlock();
 
         // now add the to_send packets
         num_pkts_added = 0; 
-        to_send_mtx.lock();  // MUTEX LOCK
+        to_send_mtx.lock();
         while(send_window.size() < NUM_PKTS_PER_ACK && num_pkts_added < to_send.size()){
             Packet pkt = to_send[num_pkts_added++];
             send_window.push_back(pkt);
         }
-        // from to_send, remove the packets that were added to send_window
         if(num_pkts_added){
             to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
         }
-        to_send_mtx.unlock(); // MUTEX UNLOCK
+        to_send_mtx.unlock();
 
         // the packets in send_window will need to be acknowledged
         to_ack_mtx.lock();
@@ -467,11 +471,11 @@ void RadioManager::write_loop()/*{{{*/
             //if(tcflush(m_wfd, TCOFLUSH) != 0 ){
                 //cout << "flush issue" << endl; // debug
             //}
+            // debug this timeout
             size_t send_time = 1e6 * num_bytes_sent / (115200/9)+100000;
             //cout << "sleep_time " << send_time << endl;   // debug
             usleep(send_time);
         }
-
         send_window.clear();
     }
     //cout << "exiting the write thread, bottom" << endl; // debug
@@ -483,8 +487,8 @@ void RadioManager::read_loop()/*{{{*/
     bool partial_pkt = false;       // denotes whether current_pkt is awaiting completion
     string current_pkt;             // holds the packet data starting at the ID, excluding header and footer
     string in_data;                 // holds the latest data from read_buf, allows prefacing with broken headers
-    string header((char *)(&HEADER),4);     // header bytes
-    string footer((char *)(&FOOTER),4);     // footer bytes
+    const string header((char *)(&HEADER),4);     // header bytes
+    const string footer((char *)(&FOOTER),4);     // footer bytes
     m_ack_count = 0;
     m_bad_crc = 0;
 
@@ -659,7 +663,7 @@ void RadioManager::read_loop()/*{{{*/
 }/*}}}*/
 
 void RadioManager::verify_crc(string data){/*{{{*/
-    static CRC32 crc;
+    CRC32 crc;
 
     string received_crc = string(data.c_str() + data.size() - 4, 4);
     data.resize(data.size() - 4);   // remove crc from data
@@ -727,8 +731,8 @@ void RadioManager::verify_crc(string data){/*{{{*/
         to_ack.erase(to_ack.begin(), to_ack.begin() + last_ack_index + 1);
         cout << "to_ack remaining" << endl;
         for( auto pkt : to_ack ){
-            id.msg_id = pkt.data[ID_OFFSET];
-            id.pkt_id = pkt.data[ID_OFFSET+1];
+            id.msg_id = pkt.data[ID_OFFSET];        // debug
+            id.pkt_id = pkt.data[ID_OFFSET+1];      // debug
             cout << "\t msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
         }
         to_ack_mtx.unlock();
@@ -738,13 +742,13 @@ void RadioManager::verify_crc(string data){/*{{{*/
         wake_write_loop();
 
     } else{
-        m_bad_crc++;
-        cout << "not verified" << endl;
+        m_bad_crc++;    // debug
+        cout << "not verified" << endl; // debug
     }
 }/*}}}*/
 
 void RadioManager::request_ack_resend(){/*{{{*/
-    cout << "request resend" << endl;
+    cout << "request resend" << endl;   // debug
     to_resend_mtx.lock();
 
     Packet request_ack_pkt;
@@ -761,6 +765,19 @@ void RadioManager::request_ack_resend(){/*{{{*/
     to_resend_mtx.unlock();
 
     wake_write_loop();
+}/*}}}*/
+
+void RadioManager::clear_queued_data()/*{{{*/
+{
+      to_send_mtx.lock();
+    to_resend_mtx.lock();
+       to_ack_mtx.lock();
+      to_send.clear();
+    to_resend.clear();
+       to_ack.clear();
+      to_send_mtx.unlock();
+    to_resend_mtx.unlock();
+       to_ack_mtx.unlock();
 }/*}}}*/
 
 bool RadioManager::send_in_progress()/*{{{*/
