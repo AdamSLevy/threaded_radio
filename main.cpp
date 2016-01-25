@@ -35,15 +35,16 @@ struct RadioData{
     float spec[2048];
 };
 
-RadioManager radio;
+RadioManager * radio_ptr;
 
 void clean_up(int s){
-    cout << "closing radio" << endl;
-    radio.close_serial();
+    radio_ptr->~RadioManager();
     exit(0);
 }
 
 int main(){
+    RadioManager radio;
+    radio_ptr = &radio;
     RadioData data;
     std::default_random_engine gen;
     std::uniform_real_distribution<float> dist(0.0,100.0);
