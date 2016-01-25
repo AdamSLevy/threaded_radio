@@ -1,125 +1,14 @@
 #include "radiomanager.h"
 
-class write_err: public exception/*{{{*/
-{
-	virtual const char * what() const throw()
-	{
-		return "A write error occurred.";
-	}
-} write_err;/*}}}*/
-
-RadioManager::RadioManager(): /*HEADER(0xFAffFFfa),*/ FOOTER(0xFeffFFfe)/*{{{*/
-{
-    m_ttyPortName = DEFAULT_TTY_PORT_NAME;
-
-    end_thread = false;
-    is_open = false;
-    m_fd = -1;
-    num_pkts = 0;
-
-}/*}}}*/
-
-RadioManager::~RadioManager()/*{{{*/
-{
-    write_cv_mtx.lock();
-    write_cv.notify_one();
-    end_thread = true;
-    write_cv_mtx.unlock();
-    closeSerial();
-    cout << " num pkts: " << num_pkts << endl;
-}/*}}}*/
-
-int RadioManager::setUpSerial()/*{{{*/
-{
-    // open the port
-    m_fd = open(m_ttyPortName.c_str(), O_RDWR | O_NOCTTY );
-    cout << "after open" << endl;
-
-    if(m_fd < 0){
-        return OPEN_FAIL;
-    }
-
-    // check if valid serial port
-    if(!isatty(m_fd)){
-        return NOT_A_TTY;
-    }
-
-    // copy old config
-    if(tcgetattr(m_fd, &m_oldConfig) < 0){
-        return GET_CONFIG_FAIL;
-    }
-
-    m_config = m_oldConfig;
-
-    // Input flags - turn off input processing
-    m_config.c_iflag = 0;
-    //m_config.c_iflag &= ~(IGNBRK | BRKINT | ICRNL |
-                         //INLCR | PARMRK | INPCK | ISTRIP | IXON);
-
-    // Output flags - turn off output processing
-    m_config.c_oflag = 0;
-
-    // No line processing
-    m_config.c_lflag = 0;
-    //m_config.c_lflag &= ~(ECHO | ECHONL | ICANON | IEXTEN | ISIG);
-
-    // No character processing
-    //m_config.c_cflag &= CRTSCTS;
-    m_config.c_cflag &= ~(CSIZE | PARENB);
-    m_config.c_cflag |= CS8;
-
-    m_config.c_cc[VMIN] = 1;
-    m_config.c_cc[VTIME] = 0;
-
-    // baud rate
-    if(cfsetspeed(&m_config, B115200)){
-        return BAUD_FAILED;
-    }
-
-    // apply config to port
-    if(tcsetattr(m_fd,TCSAFLUSH, &m_config) < 0){
-        return CONFIG_APPLY_FAIL;
-    }
-
-    if(tcflush(m_fd, TCIOFLUSH) != 0 ){
-        cout << "flush issue" << endl;
-    }
-
-    is_open = true;
-
-    write_th = thread(&RadioManager::write_loop,this);
-    write_th.detach();
-    return OPEN_SUCCESS;
-}/*}}}*/
-
-int RadioManager::closeSerial()/*{{{*/
-{
-    //fsync(m_fd);
-    // revert to old config settings
-    int exitCode = 0;
-    if(m_fd != -1 && is_open){
-        if(tcsetattr(m_fd,TCSAFLUSH, &m_oldConfig) < 0){
-            exitCode |= CONFIG_APPLY_FAIL;
-        }
-        if(close(m_fd) < 0){
-            exitCode |= CLOSE_FAIL;
-        }
-        is_open = false;
-        m_fd = -1;
-        //write_th.join();
-    }
-
-    return exitCode;
-}/*}}}*/
-
+// V************* debug functions *********************************************V/*{{{*/
 #include <iomanip>
 #include <stdio.h>
 using std::printf;
 void print_hex(byte * data, size_t len)/*{{{*/
 {
-    int perLine = 20;
+    size_t perLine = 20;
     cout << "   0:  ";
-    for(int i = 0; i < len; i++){
+    for(size_t i = 0; i < len; i++){
         byte bb = data[i];
         byte hb = (bb&0xF0)>>4;
         byte lb = bb&0x0F;
@@ -167,7 +56,193 @@ void print_pkt(Packet pkt){/*{{{*/
     printf(out.c_str(),to_hex(pkt.data[ID_OFFSET]).c_str(),to_hex(pkt.data[ID_OFFSET+1]).c_str(),to_hex(pkt.len).c_str());
     print_hex(pkt.data,pkt.len);
 }/*}}}*/
+// ^************** end debug functions ******************************************************^/*}}}*/
 
+// V************** helper NON RadioManager functions *************************************V/*{{{*/
+int call_select(int fd, size_t delay_sec, size_t delay_nsec)/*{{{*/
+{
+    if(fd < 0)
+        return -1;
+    fd_set rfds;            // stores which fd's should be watched for bytes available to read
+    struct timespec tv;      // stores timeout for select
+    
+    FD_ZERO(&rfds);         // clear fd's
+    FD_SET(fd, &rfds);    // add fd to rfds
+
+    // set delay
+    tv.tv_sec = delay_sec;
+    tv.tv_nsec = delay_nsec;
+
+    int ret = pselect(fd+1, &rfds, nullptr, nullptr, &tv, nullptr);   // will return on bytes available or timeout
+
+    /*  // debug 
+    if(ret < 0){
+        int errsv = errno;
+        //cout << "pselect: " << errsv << endl;     // debug
+        char buf[40];
+        //strerror_r(errsv,buf,40);   // debug
+        cout << buf << endl;
+    }
+    */
+    return ret;
+}/*}}}*/
+
+size_t count(const string & to_search, const string & to_count){/*{{{*/
+    size_t count = 0;
+    if(to_search.size() < to_count.size())
+        return 0;
+    for(size_t i = 0; i < to_search.size() - to_count.size(); i++){
+        if(to_count == string(to_search.c_str()+i, to_count.size()))
+            count++;
+    }
+    return count;
+}/*}}}*/
+
+size_t find_partial_end( const string & to_search, const string & to_find )/*{{{*/
+{
+    size_t max_offset = std::min(to_search.size(),to_find.size());
+    for(int offset = max_offset - 1; offset >= 0; offset--){
+        bool depth_partial = true;
+        for(int place = offset; place >= 0; place--){
+            if(to_search[to_search.size() - 1 - offset + place] != to_find[0 + place]){
+                depth_partial = false;
+                break;
+            }
+        }
+        if(depth_partial)
+            return offset + 1;
+    }
+    return 0;
+}/*}}}*/
+// ^************** end helper NON RadioManager functions ***********************************^/*}}}*/
+
+// V************** RadioManager member functions *******************************************V
+RadioManager::RadioManager(): HEADER(HEADER_HEX),FOOTER(FOOTER_HEX)/*{{{*/
+{
+    m_ttyPortName = DEFAULT_TTY_PORT_NAME;
+
+    end_thread = false;
+    is_open = false;
+    m_wfd = -1;
+    m_rfd = -1;
+    num_pkts = 0;
+
+}/*}}}*/
+
+RadioManager::~RadioManager()/*{{{*/
+{
+    closeSerial();
+    cout << " num pkts: " << num_pkts << endl;  // debug
+    cout << " num acks received: " << m_ack_count << endl;  // debug
+    cout << " num bad crc : " << m_bad_crc << endl; // debug
+}/*}}}*/
+
+int RadioManager::setUpSerial()/*{{{*/
+{
+    if(is_open)
+        closeSerial();
+
+    // open the port
+    m_wfd = open(m_ttyPortName.c_str(), O_WRONLY | O_NOCTTY );
+    m_rfd = open(m_ttyPortName.c_str(), O_RDONLY | O_NOCTTY );
+    cout << "after open" << endl; // debug
+
+    if(m_wfd < 0 || m_rfd < 0){
+        return OPEN_FAIL;
+    }
+
+    // check if valid serial port
+    if(!isatty(m_wfd) || !isatty(m_rfd)){
+        return NOT_A_TTY;
+    }
+
+    // copy old config
+    if(tcgetattr(m_wfd, &m_oldConfig) < 0){
+        return GET_CONFIG_FAIL;
+    }
+
+    m_config = m_oldConfig;
+
+    cfmakeraw(&m_config);
+
+    m_config.c_cc[VMIN] = 0;
+    m_config.c_cc[VTIME] = 5;
+
+    // baud rate
+    if(cfsetspeed(&m_config, B115200)){
+        return BAUD_FAILED;
+    }
+
+    // apply config to port
+    if(tcsetattr(m_wfd,TCSAFLUSH, &m_config) < 0){
+        return CONFIG_APPLY_FAIL;
+    }
+    if(tcsetattr(m_rfd,TCSAFLUSH, &m_config) < 0){
+        return CONFIG_APPLY_FAIL;
+    }
+
+    // flush ports
+    if(tcflush(m_wfd, TCIFLUSH) != 0 ){
+        //std::cerr << "m_wfd flush issue" << endl;   // debug
+    }
+    if(tcflush(m_rfd, TCOFLUSH) != 0 ){
+        //std::cerr << "m_rfd flush issue" << endl;   // debug
+    }
+
+    is_open = true;
+
+    // launch threads;
+    write_th = thread(&RadioManager::write_loop,this);
+    write_th.detach();
+
+    read_th = thread(&RadioManager::read_loop,this);
+    read_th.detach();
+
+    return OPEN_SUCCESS;
+}/*}}}*/
+
+int RadioManager::closeSerial()/*{{{*/
+{
+    unique_lock<mutex> rlck(is_reading_mtx);    // guarantees release on exit.
+    unique_lock<mutex> wlck(is_writing_mtx);    // guarantees release on exit.
+
+    //fsync(m_wfd);
+    // revert to old config settings
+    int exitCode = 0;
+    if(m_rfd != -1){
+        if(tcsetattr(m_rfd,TCSAFLUSH, &m_oldConfig) < 0){
+            exitCode |= CONFIG_APPLY_FAIL;
+        }
+        if(close(m_rfd) < 0){
+            exitCode |= CLOSE_FAIL;
+        }
+        m_rfd = -1;
+    }
+    if(m_wfd != -1){
+        if(tcsetattr(m_wfd,TCSAFLUSH, &m_oldConfig) < 0){
+            exitCode |= CONFIG_APPLY_FAIL;
+        }
+        if(close(m_wfd) < 0){
+            exitCode |= CLOSE_FAIL;
+        }
+        m_wfd = -1;
+    }
+
+    is_open = false;
+    wake_write_loop();
+
+    //cout << "close exit: " << exitCode << endl; // debug
+
+    return exitCode;
+}/*}}}*/
+
+void RadioManager::wake_write_loop()/*{{{*/
+{
+    if(write_cv_mtx.try_lock()){
+        write_cv.notify_one();
+        write_cv_mtx.unlock();
+    }
+}/*}}}*/
 
 int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
 {
@@ -177,16 +252,19 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     int numSent = -1;
     if(!is_open)
         return numSent;
-    if(msgID > 0xFB)
+
+    if(msgID == MAX_ID)
         msgID = 0;
 
     size_t sizeDataCompressed = (numBytes * 1.1) + 12;
     byte dataCompressed[sizeDataCompressed];
-    int z_result = compress( dataCompressed, &sizeDataCompressed, data, numBytes);
+    int z_result = compress( dataCompressed, (uLongf *)&sizeDataCompressed, data, numBytes);
+    size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
     /*}}}*/
-    if(Z_OK == z_result){
+    if(Z_OK == z_result && numPkts < MAX_ID){
         // set up 
-        size_t numPkts = sizeDataCompressed / PKT_DATA_SIZE + 1;
+        if((byte) numPkts == MAX_ID)
+            return -1;
         size_t numTotalBytesForPkts = MSG_SIZE(sizeDataCompressed);
         
         size_t bytesRemaining = sizeDataCompressed;
@@ -201,15 +279,16 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         pkt_data[ID_OFFSET+1]=pktID;
 
         // DATA: number of packets and compressed data crc
-        pkt_data[PKT_DATA_OFFSET]=(byte)numPkts;
+        pkt_data[PKT_DATA_OFFSET] = (byte)numPkts;
+
         m_crc.reset();
         m_crc.add(dataCompressed,sizeDataCompressed);
         m_crc.getHash(pkt_data+PKT_DATA_OFFSET+1);
 
         // PKT CRC
         m_crc.reset();
-        m_crc.add(pkt_data+ID_OFFSET,ID_SIZE + 1 + CRC_SIZE);
-        m_crc.getHash(pkt_data+CRC_OFFSET(1+CRC_SIZE));
+        m_crc.add(pkt_data+ID_OFFSET,ID_SIZE + HEAD_PKT_DATA_SIZE);
+        m_crc.getHash(pkt_data+CRC_OFFSET(HEAD_PKT_DATA_SIZE));
 
         pkt_to_send[pktID].len = HEAD_PKT_SIZE;
         /*}}}*/
@@ -246,16 +325,13 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
         /*}}}*/
 
         // copy pkts to shared mem
-        shared_mem_mtx.lock();      // MUTEX LOCK
+        to_send_mtx.lock();      // MUTEX LOCK
         for(pktID = 0; pktID < numPkts+1; pktID++){
             to_send.push_back(pkt_to_send[pktID]);
         }
-        shared_mem_mtx.unlock();    // MUTEX UNLOCK
+        to_send_mtx.unlock();    // MUTEX UNLOCK
 
-        if(write_cv_mtx.try_lock()){
-            write_cv.notify_one();
-            write_cv_mtx.unlock();
-        }
+        wake_write_loop();
 
         delete [] pkt_to_send;
         numSent = numTotalBytesForPkts;
@@ -264,126 +340,410 @@ int RadioManager::send(byte * data, const ulong numBytes)/*{{{*/
     return numSent;
 }/*}}}*/
 
-/*{{{*//* // send compressed
-int RadioManager::sendCompressed(byte * data, const ulong numBytes)
-{
-    ulong sizeDataCompressed = (numBytes * 1.1) + 12;
-    byte dataCompressed[sizeDataCompressed];
-    int z_result = compress( dataCompressed, &sizeDataCompressed, data, numBytes);
-    int numSent = -1;
-    if(Z_OK == z_result){
-        numSent = 0;
-        const int scale = 3; 
-        const int P_SIZE = scale*128;
-        byte * p_start;
-        ulong bytesRemaining = sizeDataCompressed;
-        for(unsigned int i = 0; i < sizeDataCompressed / P_SIZE + 1; i++){
-            if(tcdrain(m_fd) != 0){
-                int errsv = errno;
-                cout << "tcdrain: " << errsv << endl;
-                char buf[40];
-                strerror_r(errsv,buf,40);
-                cout << buf << endl;
-            }
-            usleep(scale*50000);
-            p_start = dataCompressed + i * P_SIZE;
-            int len = P_SIZE;
-            if(bytesRemaining < P_SIZE){
-                len = bytesRemaining;
-            }
-            m_crc.reset();
-            m_crc.add(p_start, len);
-            byte hash[m_crc.HashBytes];
-            m_crc.getHash(hash);
-            cout << m_crc.getHash() << endl;
-            numSent += write(m_fd, &HEADER, HEADER_SIZE);
-            numSent += write(m_fd, hash, m_crc.HashBytes);
-            numSent += write(m_fd, p_start, len);
-            bytesRemaining -= len;
-        }
-    }
-    return numSent;
-}*//*}}}*/
-
 void RadioManager::write_loop()/*{{{*/
 {
-    byte * window_buf = (byte *) calloc(MAX_PKTS_WRITE_LOOP*MAX_PKT_SIZE,sizeof(byte));
+    byte window_buf[NUM_PKTS_PER_ACK*MAX_PKT_SIZE];
     unique_lock<mutex> lck(write_cv_mtx);
-    while(is_open && (!end_thread || !send_window.empty() || !to_send.empty())){
-        // add packets to send_window, until full or to_send is empty
-        int num_pkts_added = 0;
-        while(send_window.size() < MAX_PKTS_WRITE_LOOP && num_pkts_added < to_send.size()){
+    while( is_open ){
+        // if nothing to send, wait until notify
+        while(to_send.empty() && to_resend.empty() && send_window.empty()) 
+            write_cv.wait(lck);
+
+        if(!is_open){
+            //cout << "write loop exit top" << endl; // debug
+            return;
+        }
+
+        // resend packets get priority
+        // add packets to send_window, until full or to_resend is empty
+        size_t num_pkts_added = 0;
+        to_resend_mtx.lock();  // MUTEX LOCK
+        while(send_window.size() < NUM_PKTS_PER_ACK && num_pkts_added < to_resend.size()){
+            Packet pkt = to_resend[num_pkts_added++];
+            send_window.push_back(pkt);
+        }
+        // from to_resend, remove the packets that were added to send_window
+        if(num_pkts_added)
+            to_resend.erase(to_resend.begin(),to_resend.begin()+num_pkts_added);
+        to_resend_mtx.unlock(); // MUTEX UNLOCK
+
+        // now add the to_send packets
+        num_pkts_added = 0; 
+        to_send_mtx.lock();  // MUTEX LOCK
+        while(send_window.size() < NUM_PKTS_PER_ACK && num_pkts_added < to_send.size()){
             Packet pkt = to_send[num_pkts_added++];
             send_window.push_back(pkt);
         }
-
-        shared_mem_mtx.lock();  // MUTEX LOCK
         // from to_send, remove the packets that were added to send_window
-        to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
+        if(num_pkts_added)
+            to_send.erase(to_send.begin(),to_send.begin()+num_pkts_added);
+        to_send_mtx.unlock(); // MUTEX UNLOCK
+
+        // the packets in send_window will need to be acknowledged
+        to_ack_mtx.lock();
+        for( auto pkt : send_window )
+            to_ack.push_back(pkt);
+        to_ack_mtx.unlock();
+
+
         // write the packet data to the window buffer
         byte * window_ptr = window_buf;
         for(auto & pkt_iter : send_window){
             pkt_iter.send_count--;
             memcpy(window_ptr,pkt_iter.data,pkt_iter.len);
-            //print_pkt(*pkt_iter);
+            //print_pkt(*pkt_iter); // debug
             num_pkts++;
             window_ptr += pkt_iter.len;
         }
         //print_hex(window_buf, window_ptr - window_buf);
-        shared_mem_mtx.unlock(); // MUTEX UNLOCK
 
         // write the data
         size_t num_bytes_to_send = window_ptr - window_buf;
-        cout << " num bytes to send: " << num_bytes_to_send << endl;
+        //cout << " num bytes to send: " << num_bytes_to_send << endl;
         window_ptr = window_buf;
+
+        /*
+        string haystack((char*)window_buf, num_bytes_to_send);
+        string needle;
+        needle.resize(3);
+        for(auto &c : needle)
+            c = '+';
+
+        size_t esc_loc = haystack.find(needle);
+        if(esc_loc)
+            cout << "!!!! escape code present ~~~ " << endl;
+        */
+
+
         static size_t bytes_sent = 0;
         while(num_bytes_to_send > 0){
             int num_bytes_sent = 0;
-            try{
-                size_t max_bytes = 500;
-                if(max_bytes > num_bytes_to_send)
-                    max_bytes = num_bytes_to_send;
-                num_bytes_sent = write(m_fd,window_ptr,max_bytes);
-                if(num_bytes_sent < 0){
-                    throw write_err;
-                }
-            } catch(exception err){
-                cout << err.what() << endl;
+            size_t max_bytes = 500;
+
+            if(max_bytes > num_bytes_to_send)
+                max_bytes = num_bytes_to_send;
+
+            is_writing_mtx.lock();
+            num_bytes_sent = write(m_wfd,window_ptr,max_bytes);
+            is_writing_mtx.unlock();
+
+            if(num_bytes_sent < 0){
+                //cout << " exiting write loop below write" << endl; // debug
                 is_open = false;
-                free(window_buf);
                 return;
             }
+
             num_bytes_to_send -= num_bytes_sent;
             bytes_sent += num_bytes_sent;
             window_ptr += num_bytes_sent;
-            cout << "num_bytes_sent: " << num_bytes_sent << " total: " << bytes_sent << endl;
+            //cout << "num_bytes_sent: " << num_bytes_sent << " total: " << bytes_sent << endl;
 
-            if(tcdrain(m_fd) != 0){
+            if(tcdrain(m_wfd) != 0){
                 int errsv = errno;
-                cout << "tcdrain: " << errsv << endl;
+                //cout << "tcdrain: " << errsv << endl;     // debug
                 char buf[40];
                 strerror_r(errsv,buf,40);
-                cout << buf << endl;
+                //cout << buf << endl;          // debug
             }
-            if(tcflush(m_fd, TCIOFLUSH) != 0 ){
-                cout << "flush issue" << endl;
-            }
+
+            //if(tcflush(m_wfd, TCOFLUSH) != 0 ){
+                //cout << "flush issue" << endl; // debug
+            //}
             size_t send_time = 1e6 * num_bytes_sent / (115200/9)+100000;
-            cout << "sleep_time " << send_time << endl;
+            //cout << "sleep_time " << send_time << endl;   // debug
             usleep(send_time);
         }
 
-        // get ACK
-
-        // parse ACK
-        
-        // populate send_window
         send_window.clear();
-
-        // if nothing to send, wait until notify
-        while(to_send.empty() && send_window.empty() && !end_thread && is_open) 
-            write_cv.wait(lck);
     }
-    //cout << "exiting the thread, free window buf" << endl;
-    free(window_buf);
+    //cout << "exiting the write thread, bottom" << endl; // debug
+}/*}}}*/
+
+void RadioManager::read_loop()/*{{{*/
+{
+    byte read_buf[READ_BUF_SIZE];   // used for read() call
+    bool partial_pkt = false;       // denotes whether current_pkt is awaiting completion
+    string current_pkt;             // holds the packet data starting at the ID, excluding header and footer
+    string in_data;                 // holds the latest data from read_buf, allows prefacing with broken headers
+    string header((char *)(&HEADER),4);     // header bytes
+    string footer((char *)(&FOOTER),4);     // footer bytes
+    m_ack_count = 0;
+    m_bad_crc = 0;
+
+    while(is_open){
+        // read in new packet
+        //cout << "wait " << endl;    // debug
+        // check for bytes to be read
+        int select_ret = call_select(m_rfd, 2, 0);
+
+        // -1 indicates error so exit the thread
+        if(select_ret < 0){
+            is_open = false;    // set to false to notify other threads
+            return;
+        }
+
+        // while there are bytes to read...
+        while(select_ret > 0){
+            int bytes_read = 0;
+
+            // read call
+            is_reading_mtx.lock();
+            bytes_read = read(m_rfd, read_buf, READ_BUF_SIZE);
+            is_reading_mtx.unlock();
+
+            // if error, exit the thread
+            if(bytes_read < 0){
+                is_open = false;
+                //cout << "exit after read call < 0 " << endl; // debug
+                return;
+            }
+            //cout << "bytes_read: " << bytes_read << endl;   // debug
+
+            //cout << "read_buf:" << endl;    // debug
+            //print_hex(read_buf, bytes_read); // debug
+
+            in_data += string((char *)read_buf, bytes_read);
+
+            //cout << "in_data: " << endl; // debug
+            //print_hex((byte*)in_data.c_str(), in_data.size());  // debug
+
+            if(bytes_read <= 4){
+                int n_end_foot = find_partial_end(footer, in_data);
+                int n_end_pkt = find_partial_end(current_pkt, footer);
+                if(partial_pkt && n_end_foot + n_end_pkt == 4){
+                    current_pkt.resize(current_pkt.size() - n_end_pkt);
+                    verify_crc(current_pkt);
+                    partial_pkt = false;
+                    in_data.clear();
+                }
+                continue;
+            }
+
+            size_t end_head_bytes = find_partial_end(in_data,header);
+
+            //cout << "end head bytes " << end_head_bytes << endl;
+
+
+            size_t search_from = 0;
+            if(partial_pkt){
+                partial_pkt = false;
+                //cout << "has partial pkt" << endl; // debug
+                size_t footer_index = in_data.find(footer);
+                size_t next_header_index = in_data.find(header,0);
+
+                if(footer_index != string::npos){
+                    if(next_header_index == string::npos || footer_index < next_header_index){
+                        current_pkt += string((char *)in_data.c_str(),footer_index);
+                        //cout << "partial pkt completed, no next head, or foot < head" << endl;  // debug
+                        //print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
+                        verify_crc(current_pkt);
+                    } else{
+                        //cout << "partial pkt bad: foot > head" << endl;                         // debug
+                        //print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
+                        current_pkt += string((char *)in_data.c_str(), next_header_index);
+                        // since we couldn't find a footer it's likely that the footer was corrupted
+                        // so I pull off any footer bytes in the hopes that the pkt will be okay
+                        char bb = *current_pkt.end();
+                        size_t n = 0;
+                        while((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
+                            current_pkt.pop_back();
+                            bb = *current_pkt.end();
+                            n++;
+                        }
+                        verify_crc(current_pkt);
+                    }
+                } else if(next_header_index == string::npos){
+                    //cout << "partial pkt appending..." << endl;                             // debug
+                    //print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
+                    current_pkt += in_data;
+                    partial_pkt = true;
+                } else{
+                    //cout << "DROPPED PACKET partial pkt bad footer not found"<< endl;     // debug
+                    //print_hex((byte*)current_pkt.c_str(),current_pkt.size());             // debug
+                    current_pkt += string((char *)in_data.c_str(), next_header_index);
+                    // since we couldn't find a footer it's likely that the footer was corrupted
+                    // so I pull off any footer bytes in the hopes that the pkt will be okay
+                    char bb = *current_pkt.end();
+                    size_t n = 0;
+                    while((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
+                        current_pkt.pop_back();
+                        bb = *current_pkt.end();
+                        n++;
+                    }
+                    verify_crc(current_pkt);
+                }
+                if(next_header_index != string::npos){
+                    search_from = next_header_index;
+                }
+            }
+
+            size_t num_headers = count(in_data, header);
+            //cout << "num_headers : " << num_headers << endl;
+
+            for(size_t i = 0; i < num_headers; i++){
+                //cout << "for loop " << i << endl;   // debug
+                size_t header_index = in_data.find(header,search_from);
+                size_t footer_index = in_data.find(footer,header_index);
+                size_t next_header_index = in_data.find(header,header_index+4);
+
+                if(footer_index != string::npos){
+                    if(next_header_index == string::npos || footer_index < next_header_index){
+                        //cout << "for loop framed: " << endl; // debug
+                        //print_hex((byte*)(in_data.c_str() + header_index + 4), footer_index - header_index - 4);    // debug
+                        current_pkt = string(in_data.c_str() + header_index + 4, footer_index - header_index - 4);
+                        verify_crc(current_pkt);
+                    } else{
+                        current_pkt = string((char *)(in_data.c_str() + header_index + 4), next_header_index - header_index - 4);
+                        // since we couldn't find a footer it's likely that the footer was corrupted
+                        // so I pull off any footer bytes in the hopes that the pkt will be okay
+                        char bb = *current_pkt.end();
+                        size_t n = 0;
+                        while((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
+                            current_pkt.pop_back();
+                            bb = *current_pkt.end();
+                            n++;
+                        }
+                        verify_crc(current_pkt);
+                    }
+                } else if(next_header_index == string::npos){
+                    //cout << "for loop start partial: " << endl; // debug
+                    //print_hex((byte*)(in_data.c_str() + header_index + 4),in_data.size() - header_index - 4);
+                    current_pkt = string((char *)(in_data.c_str() + header_index + 4),in_data.size() - header_index - 4);
+                    if(current_pkt.size() > 0)
+                        partial_pkt = true;
+                } else{
+                    //cout << "MISFRAMED PACKET!" << endl;
+                    current_pkt = string((char *)(in_data.c_str() + header_index + 4), next_header_index - header_index - 4);
+                    // since we couldn't find a footer it's likely that the footer was corrupted
+                    // so I pull off any footer bytes in the hopes that the pkt will be okay
+                    char bb = *current_pkt.end();
+                    size_t n = 0;
+                    while((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
+                        current_pkt.pop_back();
+                        bb = *current_pkt.end();
+                        n++;
+                    }
+                    verify_crc(current_pkt);
+                }
+                if(next_header_index != string::npos)
+                    search_from = next_header_index;
+            }
+            if(end_head_bytes)
+                in_data = string(header,end_head_bytes);
+            else
+                in_data.clear();
+            select_ret = call_select(m_rfd, 2, 0);
+        }
+    }
+    //cout << "exit end of read " << endl;    // debug
+}/*}}}*/
+
+void RadioManager::verify_crc(string data){/*{{{*/
+    static CRC32 crc;
+
+    string received_crc = string(data.c_str() + data.size() - 4, 4);
+    data.resize(data.size() - 4);   // remove crc from data
+
+    // compute crc
+    crc.reset();
+    crc.add(data.c_str(),data.size());
+    byte h[4];
+    crc.getHash(h);
+    string computed_crc((char *)h,4);
+
+    if(computed_crc == received_crc){
+        cout << "verified" << endl;     // debug
+        m_ack_count++;                  // debug
+
+        // parse data into list of acknowledged packets
+        MsgPktID id;
+
+        id.msg_id = (byte) data[0];
+        id.pkt_id = (byte) data[1];
+        byte current_msg_id = (byte) data[0];
+
+        vector<MsgPktID> ack_id;    // to hold list of acknowledged msg pkt ids
+        ack_id.push_back(id);
+        for(size_t i = 2; i < data.size(); i++){
+            byte bb = (byte) data[i];
+            // change msg id
+            if(bb == 0xFF){
+                current_msg_id = (byte) data[i+1];
+                i++;
+                continue;
+            }
+            id.msg_id = current_msg_id;
+            id.pkt_id = bb;
+            ack_id.push_back(id);
+        }
+
+        // find acknowledged packets
+        to_ack_mtx.lock();
+
+        size_t last_ack_index = 0;
+        for(size_t i = 0; i < to_ack.size(); i++){
+            id.msg_id = to_ack[i].data[ID_OFFSET];
+            id.pkt_id = to_ack[i].data[ID_OFFSET+1];
+            for( auto p_id : ack_id ){
+                if( p_id.pkt_id == id.pkt_id &&
+                        p_id.msg_id == id.msg_id ){
+                    to_ack[i].send_count = 0;   // mark for removal
+                    cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                    last_ack_index = i;
+                }
+            }
+        }
+        to_resend_mtx.lock();
+        for(size_t i = 0; i < last_ack_index; i++){
+            if(to_ack[i].send_count > 0){
+                to_ack[i].send_count--;
+                to_resend.push_back(to_ack[i]);
+                id.msg_id = to_ack[i].data[ID_OFFSET];      // debug
+                id.pkt_id = to_ack[i].data[ID_OFFSET+1];    // debug
+                cout << "\t queued for resend msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+            }
+        }
+        to_resend_mtx.unlock();
+        to_ack.erase(to_ack.begin(), to_ack.begin() + last_ack_index + 1);
+        cout << "to_ack remaining" << endl;
+        for( auto pkt : to_ack ){
+            id.msg_id = pkt.data[ID_OFFSET];
+            id.pkt_id = pkt.data[ID_OFFSET+1];
+            cout << "\t msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+        }
+        to_ack_mtx.unlock();
+
+        cout << endl; // debug
+
+        wake_write_loop();
+
+    } else{
+        m_bad_crc++;
+        cout << "not verified" << endl;
+    }
+}/*}}}*/
+
+void RadioManager::request_ack_resend(){/*{{{*/
+    cout << "request resend" << endl;
+    to_resend_mtx.lock();
+
+    Packet request_ack_pkt;
+    request_ack_pkt.data[ID_OFFSET] = 0xFF;
+    request_ack_pkt.data[ID_OFFSET+1] = 0xFF;
+    CRC32 crc;
+    crc.reset();
+    crc.add(request_ack_pkt.data + ID_OFFSET, 2);
+    crc.getHash(request_ack_pkt.data+CRC_OFFSET(0));
+    memcpy(request_ack_pkt.data + FOOTER_OFFSET(0), (byte*)(&FOOTER), 4);
+    request_ack_pkt.len = PKT_SIZE(0);
+    to_resend.push_back(request_ack_pkt);
+
+    to_resend_mtx.unlock();
+
+    wake_write_loop();
+}/*}}}*/
+
+bool RadioManager::send_in_progress()/*{{{*/
+{
+    return !(to_send.empty() && to_resend.empty() && send_window.empty());
 }/*}}}*/

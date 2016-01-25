@@ -3,7 +3,7 @@ SHELL=/bin/sh
 .SUFFIXES: .cpp .o
 CC=g++
 CFLAGS=-c -Wall -std=c++11
-LDFLAGS=-lz
+LDFLAGS=-lz -lpthread
 SOURCES=main.cpp radiomanager.cpp crc32.cpp
 HEADERS=radiomanager.h crc32.h
 OBJECTS=$(SOURCES:.cpp=.o)
