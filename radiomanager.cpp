@@ -257,7 +257,7 @@ void RadioManager::wake_write_loop()/*{{{*/
 int RadioManager::queue_data(byte * data, const ulong num_bytes)/*{{{*/
 {
     static byte msgID = 0;/*{{{*/
-    static const byte * foot_ptr = (byte *)(&FOOTER);
+    const byte * foot_ptr = (byte *)(&FOOTER);
     CRC32 crc;
     
     int num_sent = -1;
@@ -435,11 +435,9 @@ void RadioManager::write_loop()/*{{{*/
         }
         */
 
-
-        static size_t bytes_sent = 0;
         while(num_bytes_to_send > 0){
             int num_bytes_sent = 0;
-            size_t max_bytes = 500;
+            size_t max_bytes = MAX_BYTES_PER_WRITE;
 
             if(max_bytes > num_bytes_to_send){
                 max_bytes = num_bytes_to_send;
@@ -456,7 +454,6 @@ void RadioManager::write_loop()/*{{{*/
             }
 
             num_bytes_to_send -= num_bytes_sent;
-            bytes_sent += num_bytes_sent;
             window_ptr += num_bytes_sent;
             //cout << "num_bytes_sent: " << num_bytes_sent << " total: " << bytes_sent << endl;
 

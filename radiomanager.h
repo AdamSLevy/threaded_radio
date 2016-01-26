@@ -51,6 +51,8 @@ using std::exception;
 typedef unsigned long ulong;
 typedef unsigned char byte;
 
+#define PRINT_DEBUG {printf("\tFile: %s, Line: %i",__FILE__,__LINE__);}
+
 #define HEADER_HEX 0xFaFfFfFa
 #define FOOTER_HEX 0xFeFfFfFe
 
@@ -62,27 +64,27 @@ typedef unsigned char byte;
 #define CRC_SIZE        4
 #define FOOTER_SIZE     4
 
-#define PKT_SIZE(data_len)  (HEADER_SIZE + ID_SIZE + data_len + CRC_SIZE + FOOTER_SIZE)
-#define MSG_SIZE(data_len)  (HEAD_PKT_SIZE + MAX_PKT_SIZE * (data_len / PKT_DATA_SIZE) + PKT_SIZE(data_len % PKT_DATA_SIZE))
+#define PKT_SIZE(data_len)  (HEADER_SIZE + ID_SIZE + (data_len) + CRC_SIZE + FOOTER_SIZE)
+#define MSG_SIZE(data_len)  (HEAD_PKT_SIZE + MAX_PKT_SIZE * ((data_len) / PKT_DATA_SIZE) + PKT_SIZE((data_len) % PKT_DATA_SIZE))
 #define MAX_PKT_SIZE        PKT_SIZE(PKT_DATA_SIZE)
 #define HEAD_PKT_DATA_SIZE  1 + 4 // 1 for num_pkts, 4 for message crc
 #define HEAD_PKT_SIZE       PKT_SIZE(HEAD_PKT_DATA_SIZE)
 
 // for standard packet with full data
-#define ID_OFFSET       HEADER_SIZE
-#define PKT_DATA_OFFSET (ID_OFFSET+ID_SIZE)
-#define CRC_OFFSET(data_len)      (PKT_DATA_OFFSET+data_len)
-#define FOOTER_OFFSET(data_len)   (CRC_OFFSET(data_len)+CRC_SIZE)
+#define ID_OFFSET                   HEADER_SIZE
+#define PKT_DATA_OFFSET             (ID_OFFSET+ID_SIZE)
+#define CRC_OFFSET(data_len)        (PKT_DATA_OFFSET+(data_len))
+#define FOOTER_OFFSET(data_len)     (CRC_OFFSET(data_len)+CRC_SIZE)
 
 #define NUM_PKTS_PER_ACK 10
 #define MAX_ACK_SIZE (HEADER_SIZE + NUM_PKTS_PER_ACK + 2 + 2 + CRC_SIZE + FOOTER_SIZE)
 #define MAX_NUM_ATTEMPTS 20
-#define NUM_BYTES_WRITE_CALL 128
+#define BYTES_PER_WRITE 500
 #define READ_BUF_SIZE (MAX_ACK_SIZE * 4)
 
-#define r2(e)       e,e
-#define r4(e)    r2( r2(e))
-#define r8(e)    r2( r4(e))
+#define r2(e)    e,e
+#define r4(e)    r2( r2(e) )
+#define r8(e)    r2( r4(e) )
 //#define r16(e)   r4( r4(e))
 //#define r32(e)   r2(r16(e))
 //#define r64(e)   r2(r32(e))
@@ -176,5 +178,4 @@ private:
     bool is_open;
 
     int num_pkts;
-
 };
