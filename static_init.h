@@ -80,3 +80,5 @@ INIT_32768
 #endif 
 
 
+#undef STATIC_INIT_VALUE    // added by Adam Levy, 
+#undef STATIC_INIT_COUNT    // allows for easy reuse of this header file more than once in another file
