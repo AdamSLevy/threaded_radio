@@ -373,23 +373,43 @@ void RadioManager::write_loop()/*{{{*/
         // Populate send_window
         // send_window will be filled with packets until
         //      it has NUM_PKTS_PER_ACK or to_send and to_resend are empty
+        
+        // ACK ACKS
+        // Add acknowledgements of acknowledgements first
+        // Do not count toward total packet count in send window
+        size_t ack_ack_pkts_added = 0;
+        to_ack_ack_mtx.lock();
+        while(ack_ack_pkts_added < to_ack_ack.size()){
+            send_window.push_back(to_ack_ack[ack_ack_pkts_added++]);
+        }
+        to_ack_ack.clear();
+        to_ack_ack_mtx.unlock();
 
         // RESEND packets get priority
         // Add to_resend Packets to send_window
         size_t resend_pkts_added = 0;
         to_resend_mtx.lock();
-        while (send_window.size() < NUM_PKTS_PER_ACK && resend_pkts_added < to_resend.size()){
+        while ((send_window.size() < (NUM_PKTS_PER_ACK + ack_ack_pkts_added))
+                && (resend_pkts_added < to_resend.size())){
+            MsgPktID id;
+            id.msg_id = to_resend[resend_pkts_added].data[ID_OFFSET];      // debug
+            id.pkt_id = to_resend[resend_pkts_added].data[ID_OFFSET+1];    // debug
+            cout << "\t\tresending msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
             send_window.push_back(to_resend[resend_pkts_added++]);
         }
         if (resend_pkts_added){
             to_resend.erase(to_resend.begin(),to_resend.begin()+resend_pkts_added);
         }
+        cout << "\t\t to_resend size: " << to_resend.size() << endl;
+        cout << "\t\t to_send size: " << to_send.size() << endl << endl << endl;
         to_resend_mtx.unlock();
 
+        // NEW DATA PKTS
         // Add to_send Packets to send_window
         size_t send_pkts_added = 0; 
         to_send_mtx.lock();
-        while (send_window.size() < NUM_PKTS_PER_ACK && send_pkts_added < to_send.size()){
+        while ((send_window.size() < (NUM_PKTS_PER_ACK + ack_ack_pkts_added))
+                && (send_pkts_added < to_send.size())){
             send_window.push_back(to_send[send_pkts_added++]);
         }
         if (send_pkts_added){
@@ -398,9 +418,10 @@ void RadioManager::write_loop()/*{{{*/
         to_send_mtx.unlock();
 
         // Add send_window Packets to to_ack, so they will await acknowledgement
+        // Exclude leading ack ack packets
         to_ack_mtx.lock();
-        for ( auto pkt : send_window ){
-            to_ack.push_back(pkt);
+        for ( size_t i = ack_ack_pkts_added; i < send_window.size(); i++){
+            to_ack.push_back(send_window[i]);
         }
         to_ack_mtx.unlock();
 
@@ -512,6 +533,7 @@ void RadioManager::read_loop()/*{{{*/
                     partial_pkt = false;
                     in_data.clear();
                 }
+                select_ret = call_select(m_rfd, 2, 0);
                 continue;
             }
 
@@ -650,7 +672,7 @@ void RadioManager::verify_crc(string data){/*{{{*/
     string computed_crc((char *)h,4);
 
     if (computed_crc == received_crc){
-        cout << "verified" << endl;     // debug
+        cout << "---- ack verified ------" << endl;     // debug
         m_ack_count++;                  // debug
 
         // parse data into list of acknowledged packets
@@ -658,6 +680,9 @@ void RadioManager::verify_crc(string data){/*{{{*/
 
         id.msg_id = (byte) data[0];
         id.pkt_id = (byte) data[1];
+
+        ack_ack(id);    // acknowledge the acknowledgement packet
+
         byte current_msg_id = (byte) data[0];
 
         vector<MsgPktID> ack_id;    // to hold list of acknowledged msg pkt ids
@@ -675,45 +700,75 @@ void RadioManager::verify_crc(string data){/*{{{*/
             ack_id.push_back(id);
         }
 
-        // find acknowledged packets
-        to_ack_mtx.lock();
 
-        size_t last_ack_index = 0;
-        for (size_t i = 0; i < to_ack.size(); i++){
-            id.msg_id = to_ack[i].data[ID_OFFSET];
-            id.pkt_id = to_ack[i].data[ID_OFFSET+1];
-            for ( auto p_id : ack_id ){
-                if ( p_id.pkt_id == id.pkt_id &&
-                        p_id.msg_id == id.msg_id ){
-                    to_ack[i].send_rem = 0;   // mark for removal
-                    cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
-                    last_ack_index = i;
+        vector<Packet> replace_to_ack;
+        size_t acks_remaining = ack_id.size();
+        to_ack_mtx.lock();
+        bool resend_lock_owned = false;
+        bool last_was_acked = false;
+        for (auto pkt : to_ack){
+            if (acks_remaining){
+                id.msg_id = pkt.data[ID_OFFSET];
+                id.pkt_id = pkt.data[ID_OFFSET+1];
+                for (auto a_id : ack_id){
+                    if (a_id.pkt_id == id.pkt_id
+                        &&  a_id.msg_id == id.msg_id){
+                        // pkt acknowledged
+                        pkt.acked = true;   // mark for removal
+                        acks_remaining--;
+                        cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                    }
+                }
+                if (!pkt.acked){
+                    if( last_was_acked || pkt.num_acks_passed == MAX_ACKS_AUTO_RESEND){
+                        id.msg_id = pkt.data[ID_OFFSET];      // debug
+                        id.pkt_id = pkt.data[ID_OFFSET+1];    // debug
+                        cout << "\t queued for resend msg: " << to_hex(id.msg_id)
+                            << " pkt: " << to_hex(id.pkt_id) << " send_rem: " << pkt.send_rem 
+                            << " num_acks_passed: " << pkt.num_acks_passed << endl; // debug
+
+                        if (!resend_lock_owned){
+                            to_resend_mtx.lock();
+                            resend_lock_owned = true;
+                        }
+                        pkt.send_rem--;
+                        pkt.num_acks_passed = 0;
+                        to_resend.push_back(pkt);
+
+                    } else{
+                        pkt.num_acks_passed++;
+                        replace_to_ack.push_back(pkt);
+                        cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                    }
+                }
+            } else{
+                if (resend_lock_owned){
+                    to_resend_mtx.unlock();
+                    resend_lock_owned = false;
+                    wake_write_loop();
+                }
+                if(!pkt.acked){
+                    replace_to_ack.push_back(pkt);
+                    id.msg_id = pkt.data[ID_OFFSET];
+                    id.pkt_id = pkt.data[ID_OFFSET+1];
+                    cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                 }
             }
+            last_was_acked = pkt.acked;
         }
-        to_resend_mtx.lock();
-        for (size_t i = 0; i < last_ack_index; i++){
-            if (to_ack[i].send_rem > 0){
-                to_ack[i].send_rem--;
-                to_resend.push_back(to_ack[i]);
-                id.msg_id = to_ack[i].data[ID_OFFSET];      // debug
-                id.pkt_id = to_ack[i].data[ID_OFFSET+1];    // debug
-                cout << "\t queued for resend msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
-            }
+
+        if (resend_lock_owned){
+            to_resend_mtx.unlock();
+            wake_write_loop();
         }
-        to_resend_mtx.unlock();
-        to_ack.erase(to_ack.begin(), to_ack.begin() + last_ack_index + 1);
-        cout << "to_ack remaining" << endl;
-        for ( auto pkt : to_ack ){
-            id.msg_id = pkt.data[ID_OFFSET];        // debug
-            id.pkt_id = pkt.data[ID_OFFSET+1];      // debug
-            cout << "\t msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
-        }
+        to_ack = replace_to_ack;
+
+        cout << endl;
+
         to_ack_mtx.unlock();
 
         cout << endl; // debug
 
-        wake_write_loop();
 
     } else{
         m_bad_crc++;    // debug
@@ -721,22 +776,20 @@ void RadioManager::verify_crc(string data){/*{{{*/
     }
 }/*}}}*/
 
-void RadioManager::request_ack_resend(){/*{{{*/
-    cout << "request resend" << endl;   // debug
-    to_resend_mtx.lock();
-
-    Packet request_ack_pkt;
-    request_ack_pkt.data[ID_OFFSET] = 0xFF;
-    request_ack_pkt.data[ID_OFFSET+1] = 0xFF;
+void RadioManager::ack_ack(MsgPktID id){/*{{{*/
+    Packet ack;
+    ack.data[ID_OFFSET] = id.msg_id;
+    ack.data[ID_OFFSET+1] = id.pkt_id;
     CRC32 crc;
     crc.reset();
-    crc.add(request_ack_pkt.data + ID_OFFSET, 2);
-    crc.getHash(request_ack_pkt.data+CRC_OFFSET(0));
-    memcpy(request_ack_pkt.data + FOOTER_OFFSET(0), (byte*)(&FOOTER), 4);
-    request_ack_pkt.len = PKT_SIZE(0);
-    to_resend.push_back(request_ack_pkt);
+    crc.add(ack.data + ID_OFFSET, 2);
+    crc.getHash(ack.data+CRC_OFFSET(0));
+    memcpy(ack.data + FOOTER_OFFSET(0), (byte*)(&FOOTER), 4);
+    ack.len = PKT_SIZE(0);
 
-    to_resend_mtx.unlock();
+    to_ack_ack_mtx.lock();
+    to_ack_ack.push_back(ack);
+    to_ack_ack_mtx.unlock();
 
     wake_write_loop();
 }/*}}}*/
@@ -756,5 +809,5 @@ void RadioManager::clear_queued_data()/*{{{*/
 
 bool RadioManager::send_in_progress()/*{{{*/
 {
-    return !(to_send.empty() && to_resend.empty() && send_window.empty());
+    return !(to_send.empty() && to_resend.empty() && send_window.empty() && to_ack_ack.empty());
 }/*}}}*/

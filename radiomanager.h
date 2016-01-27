@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <string.h>
 
 
 #include "zlib.h"       // compression lib
@@ -15,8 +16,6 @@
 // STL containers
 #include <vector>
 using std::vector;
-#include <deque>
-using std::deque;
 #include <string>
 using std::string;
 
@@ -47,7 +46,7 @@ using std::cout;
 // PORT NAME
 #ifndef __APPLE__
     //#define DEFAULT_TTY_PORT_NAME "/dev/ttyS1"
-    #define DEFAULT_TTY_PORT_NAME "/dev/ttyUSB1"
+    #define DEFAULT_TTY_PORT_NAME "/dev/ttyUSB0"
 #endif
 #ifdef __APPLE__
     #define DEFAULT_TTY_PORT_NAME "/dev/cu.usbserial-A103N2XP"
@@ -96,6 +95,7 @@ typedef unsigned char byte;
 #define MAX_NUM_ATTEMPTS 20
 #define MAX_BYTES_PER_WRITE 500
 #define READ_BUF_SIZE (MAX_ACK_SIZE * 4)
+#define MAX_ACKS_AUTO_RESEND 3
 
 //#define r16(e)   r4( r4(e))
 //#define r32(e)   r2(r16(e))
@@ -133,12 +133,20 @@ typedef unsigned char byte;
 struct Packet{
     size_t len              = MAX_PKT_SIZE;
     size_t send_rem         = MAX_NUM_ATTEMPTS;
+    size_t num_acks_passed  = 0;
+    bool acked              = false;
     byte data[MAX_PKT_SIZE] = { HEAD_PKT_INIT,
                                     #define STATIC_INIT_VALUE 0x00
                                     #define STATIC_INIT_COUNT (MAX_PKT_SIZE - HEAD_PKT_SIZE - FOOTER_SIZE)
                                     #include "static_init.h"
                                 FOOTER_INIT};
 };
+
+struct AwaitingAck{
+    size_t num_acks_passed = 0;
+    vector<Packet> to_ack;
+};
+
 
 struct MsgPktID{
     byte msg_id;
@@ -179,20 +187,23 @@ private:
     const ulong HEADER;
     const ulong FOOTER;
 
-    // populated by send(), emptied by write_loop()
-    vector<Packet> to_send;
+    // Populated by send(), emptied by write_loop()
+    vector<Packet> to_send;         // Holds new Packets awaiting to be sent
     mutex to_send_mtx;
 
-    // populated by write_loop(), emptied by read_loop()
-    deque<Packet> to_ack;
-    mutex to_ack_mtx;
+    // Populated by write_loop(), emptied by read_loop()
+    vector<Packet> to_ack;      // Holds a struct with a vector of sent packets awaiting acknowledgements.
+    mutex to_ack_mtx;               // The vector groups Packets which will be acknowledged together.
+
+    vector<Packet> to_ack_ack; // Holds acknowledgements of acknowledgements that need to be sent.
+    mutex to_ack_ack_mtx;
 
     // populated by read_loop(), empted by write_loop(), resends are given priority by write_loop
-    vector<Packet> to_resend;
+    vector<Packet> to_resend;       // Holds packets that were not acknowledged and need to be resent
     mutex to_resend_mtx;
 
     // solely used by write_loop()
-    vector<Packet> send_window;
+    vector<Packet> send_window;     // Holds the current packets being sent
 
     // WRITE
     void write_loop();
@@ -206,7 +217,7 @@ private:
     thread read_th;
 
     void verify_crc(string data);
-    void request_ack_resend();
+    void ack_ack(MsgPktID);
 
     bool is_open;
 
