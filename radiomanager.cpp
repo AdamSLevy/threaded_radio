@@ -391,11 +391,17 @@ void RadioManager::write_loop()/*{{{*/
         to_resend_mtx.lock();
         while ((send_window.size() < (NUM_PKTS_PER_ACK + ack_ack_pkts_added))
                 && (resend_pkts_added < to_resend.size())){
+            MsgPktID id;
+            id.msg_id = to_resend[resend_pkts_added].data[ID_OFFSET];      // debug
+            id.pkt_id = to_resend[resend_pkts_added].data[ID_OFFSET+1];    // debug
+            cout << "\t\tresending msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
             send_window.push_back(to_resend[resend_pkts_added++]);
         }
         if (resend_pkts_added){
             to_resend.erase(to_resend.begin(),to_resend.begin()+resend_pkts_added);
         }
+        cout << "\t\t to_resend size: " << to_resend.size() << endl;
+        cout << "\t\t to_send size: " << to_send.size() << endl << endl << endl;
         to_resend_mtx.unlock();
 
         // NEW DATA PKTS
@@ -527,6 +533,7 @@ void RadioManager::read_loop()/*{{{*/
                     partial_pkt = false;
                     in_data.clear();
                 }
+                select_ret = call_select(m_rfd, 2, 0);
                 continue;
             }
 
@@ -734,26 +741,29 @@ void RadioManager::verify_crc(string data){/*{{{*/
                     } else{
                         pkt.num_acks_passed++;
                         replace_to_ack.push_back(pkt);
+                        cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                     }
                 }
             } else{
                 if (resend_lock_owned){
                     to_resend_mtx.unlock();
                     resend_lock_owned = false;
+                    wake_write_loop();
                 }
                 if(!pkt.acked){
                     replace_to_ack.push_back(pkt);
+                    id.msg_id = pkt.data[ID_OFFSET];
+                    id.pkt_id = pkt.data[ID_OFFSET+1];
+                    cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                 }
             }
         }
-        to_ack = replace_to_ack;
-        cout << endl;
-        cout << "AWAITING" << endl;
-        for(auto p : to_ack){
-            id.msg_id = p.data[ID_OFFSET];      // debug
-            id.pkt_id = p.data[ID_OFFSET+1];    // debug
-            cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+
+        if (resend_lock_owned){
+            to_resend_mtx.unlock();
+            wake_write_loop();
         }
+        to_ack = replace_to_ack;
 
         cout << endl;
 
@@ -761,7 +771,6 @@ void RadioManager::verify_crc(string data){/*{{{*/
 
         cout << endl; // debug
 
-        wake_write_loop();
 
     } else{
         m_bad_crc++;    // debug
