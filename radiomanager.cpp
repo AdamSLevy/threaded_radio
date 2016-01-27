@@ -704,8 +704,8 @@ void RadioManager::verify_crc(string data){/*{{{*/
         vector<Packet> replace_to_ack;
         size_t acks_remaining = ack_id.size();
         to_ack_mtx.lock();
-        bool started = false;
         bool resend_lock_owned = false;
+        bool last_was_acked = false;
         for (auto pkt : to_ack){
             if (acks_remaining){
                 id.msg_id = pkt.data[ID_OFFSET];
@@ -715,15 +715,12 @@ void RadioManager::verify_crc(string data){/*{{{*/
                         &&  a_id.msg_id == id.msg_id){
                         // pkt acknowledged
                         pkt.acked = true;   // mark for removal
-                        if (!started){
-                            started = true;
-                        }
                         acks_remaining--;
                         cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                     }
                 }
                 if (!pkt.acked){
-                    if(started || pkt.num_acks_passed == MAX_ACKS_AUTO_RESEND){
+                    if( last_was_acked || pkt.num_acks_passed == MAX_ACKS_AUTO_RESEND){
                         id.msg_id = pkt.data[ID_OFFSET];      // debug
                         id.pkt_id = pkt.data[ID_OFFSET+1];    // debug
                         cout << "\t queued for resend msg: " << to_hex(id.msg_id)
@@ -757,6 +754,7 @@ void RadioManager::verify_crc(string data){/*{{{*/
                     cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                 }
             }
+            last_was_acked = pkt.acked;
         }
 
         if (resend_lock_owned){
