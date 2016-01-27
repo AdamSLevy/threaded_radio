@@ -413,12 +413,10 @@ void RadioManager::write_loop()/*{{{*/
 
         // Add send_window Packets to to_ack, so they will await acknowledgement
         // Exclude leading ack ack packets
-        AwaitingAck ack_pkts;
-        for ( size_t i = ack_ack_pkts_added; i < send_window.size(); i++){
-            ack_pkts.to_ack.push_back(send_window[i]);
-        }
         to_ack_mtx.lock();
-        to_ack.push_back(ack_pkts);
+        for ( size_t i = ack_ack_pkts_added; i < send_window.size(); i++){
+            to_ack.push_back(send_window[i]);
+        }
         to_ack_mtx.unlock();
 
 
@@ -696,67 +694,65 @@ void RadioManager::verify_crc(string data){/*{{{*/
         }
 
 
-        deque<AwaitingAck> replace_to_ack;
+        vector<Packet> replace_to_ack;
         size_t acks_remaining = ack_id.size();
         to_ack_mtx.lock();
-        for (auto a_ack : to_ack){
-            size_t num_acked = 0;
+        bool started = false;
+        bool resend_lock_owned = false;
+        for (auto pkt : to_ack){
             if (acks_remaining){
-                for (auto &pkt : a_ack.to_ack){
-                    id.msg_id = pkt.data[ID_OFFSET];
-                    id.pkt_id = pkt.data[ID_OFFSET+1];
-                    for (auto a_id : ack_id){
-                        if (a_id.pkt_id == id.pkt_id
-                            &&  a_id.msg_id == id.msg_id){
-                            // pkt acknowledged
-                            pkt.acked = true;   // mark for removal
-                            num_acked++;
-                            acks_remaining--;
-                            cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                id.msg_id = pkt.data[ID_OFFSET];
+                id.pkt_id = pkt.data[ID_OFFSET+1];
+                for (auto a_id : ack_id){
+                    if (a_id.pkt_id == id.pkt_id
+                        &&  a_id.msg_id == id.msg_id){
+                        // pkt acknowledged
+                        pkt.acked = true;   // mark for removal
+                        if (!started){
+                            started = true;
                         }
+                        acks_remaining--;
+                        cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                     }
                 }
-            }
-            if ((num_acked >= (ack_id.size() / 2)) 
-                 || (a_ack.num_acks_passed == MAX_ACKS_AUTO_RESEND)){
-                // resend bad packets
-                bool resend_lock_owned = false;
-                for (auto pkt : a_ack.to_ack){
-                    if ((!pkt.acked) && (pkt.send_rem > 0)){
+                if (!pkt.acked){
+                    if(started || pkt.num_acks_passed == MAX_ACKS_AUTO_RESEND){
+                        id.msg_id = pkt.data[ID_OFFSET];      // debug
+                        id.pkt_id = pkt.data[ID_OFFSET+1];    // debug
+                        cout << "\t queued for resend msg: " << to_hex(id.msg_id)
+                            << " pkt: " << to_hex(id.pkt_id) << " send_rem: " << pkt.send_rem 
+                            << " num_acks_passed: " << pkt.num_acks_passed << endl; // debug
+
                         if (!resend_lock_owned){
                             to_resend_mtx.lock();
                             resend_lock_owned = true;
                         }
                         pkt.send_rem--;
+                        pkt.num_acks_passed = 0;
                         to_resend.push_back(pkt);
-                        id.msg_id = pkt.data[ID_OFFSET];      // debug
-                        id.pkt_id = pkt.data[ID_OFFSET+1];    // debug
-                        cout << "\t queued for resend msg: " << to_hex(id.msg_id)
-                            << " pkt: " << to_hex(id.pkt_id) << " send_rem: " << pkt.send_rem << endl; // debug
-                    } else if (pkt.send_rem == 0){
-                        id.msg_id = pkt.data[ID_OFFSET];      // debug
-                        id.pkt_id = pkt.data[ID_OFFSET+1];    // debug
-                        cout << "\t FAILED msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+
+                    } else{
+                        pkt.num_acks_passed++;
+                        replace_to_ack.push_back(pkt);
                     }
                 }
+            } else{
                 if (resend_lock_owned){
                     to_resend_mtx.unlock();
+                    resend_lock_owned = false;
                 }
-            } else{
-                a_ack.num_acks_passed++;
-                replace_to_ack.push_back(a_ack);
+                if(!pkt.acked){
+                    replace_to_ack.push_back(pkt);
+                }
             }
         }
         to_ack = replace_to_ack;
         cout << endl;
         cout << "AWAITING" << endl;
-        for(auto a : to_ack){
-            for( auto p : a.to_ack){
-                id.msg_id = p.data[ID_OFFSET];      // debug
-                id.pkt_id = p.data[ID_OFFSET+1];    // debug
-                cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
-            }
-            cout << endl;
+        for(auto p : to_ack){
+            id.msg_id = p.data[ID_OFFSET];      // debug
+            id.pkt_id = p.data[ID_OFFSET+1];    // debug
+            cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
         }
 
         cout << endl;

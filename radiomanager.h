@@ -15,8 +15,6 @@
 // STL containers
 #include <vector>
 using std::vector;
-#include <deque>
-using std::deque;
 #include <string>
 using std::string;
 
@@ -134,6 +132,7 @@ typedef unsigned char byte;
 struct Packet{
     size_t len              = MAX_PKT_SIZE;
     size_t send_rem         = MAX_NUM_ATTEMPTS;
+    size_t num_acks_passed  = 0;
     bool acked              = false;
     byte data[MAX_PKT_SIZE] = { HEAD_PKT_INIT,
                                     #define STATIC_INIT_VALUE 0x00
@@ -192,7 +191,7 @@ private:
     mutex to_send_mtx;
 
     // Populated by write_loop(), emptied by read_loop()
-    deque<AwaitingAck> to_ack;      // Holds a struct with a vector of sent packets awaiting acknowledgements.
+    vector<Packet> to_ack;      // Holds a struct with a vector of sent packets awaiting acknowledgements.
     mutex to_ack_mtx;               // The vector groups Packets which will be acknowledged together.
 
     vector<Packet> to_ack_ack; // Holds acknowledgements of acknowledgements that need to be sent.
