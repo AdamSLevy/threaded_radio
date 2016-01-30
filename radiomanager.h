@@ -41,7 +41,7 @@ using std::printf;
 #include <iostream>
 using std::endl;
 using std::cout;
-#define PRINT_DEBUG {printf("\tFile: %s, Line: %i",__FILE__,__LINE__);}
+#define PRINT_DEBUG {printf("\tFile: %s, Line: %i\n",__FILE__,__LINE__);}
 
 // PORT NAME
 #ifndef __APPLE__

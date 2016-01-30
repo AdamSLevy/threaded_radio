@@ -2,7 +2,7 @@ SHELL=/bin/sh
 .SUFFIXES:
 .SUFFIXES: .cpp .o
 CC=g++
-CFLAGS=-c -Wall -std=c++11
+CFLAGS=-c -g -Wall -std=c++11
 LDFLAGS=-lz -lpthread
 SOURCES=main.cpp radiomanager.cpp crc32.cpp
 HEADERS=radiomanager.h crc32.h
