@@ -118,9 +118,11 @@ START:
             goto START; // im a bad boy, but it works
         }
 
-        if(total_bytes > 10000000){
+        if(total_bytes > 8240*2){
             //cout << "Total Sent: " << total_bytes << endl;
             while(radio.send_in_progress()){};
+
+            //sleep(2);
 
             radio.close_serial();
             return 0;
