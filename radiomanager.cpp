@@ -126,6 +126,8 @@ RadioManager::RadioManager(): HEADER(HEADER_HEX),FOOTER(FOOTER_HEX)/*{{{*/
     m_wfd = -1;
     m_rfd = -1;
     num_pkts = 0;       // debug
+    m_num_resent = 0;
+    m_num_sent = 0;
 
 }/*}}}*/
 
@@ -135,6 +137,8 @@ RadioManager::~RadioManager()/*{{{*/
     cout << " num pkts: " << num_pkts << endl;  // debug
     cout << " num acks received: " << m_ack_count << endl;  // debug
     cout << " num bad crc : " << m_bad_crc << endl; // debug
+    cout << " num successfully sent : " << m_num_sent << endl; // debug
+    cout << " num resent : " << m_num_resent << endl; // debug
 }/*}}}*/
 
 int RadioManager::open_serial( string port_name )/*{{{*/
@@ -362,7 +366,7 @@ void RadioManager::write_loop()/*{{{*/
     unique_lock<mutex> lck(write_cv_mtx);
     while ( is_open ){
         // If there is nothing to send, wait until notified
-        while (to_send.empty() && to_resend.empty() && send_window.empty()){
+        while (to_send.empty() && to_resend.empty() && send_window.empty() && to_ack_ack.empty()){
             write_cv.wait(lck);
         }
 
@@ -398,6 +402,7 @@ void RadioManager::write_loop()/*{{{*/
             send_window.push_back(to_resend[resend_pkts_added++]);
         }
         if (resend_pkts_added){
+            m_num_resent += resend_pkts_added;
             to_resend.erase(to_resend.begin(),to_resend.begin()+resend_pkts_added);
         }
         cout << "\t\t to_resend size: " << to_resend.size() << endl;
@@ -467,9 +472,9 @@ void RadioManager::write_loop()/*{{{*/
             }
 
             // debug this timeout
-            size_t send_time = 1e6 * num_bytes_sent / (115200/9)+100000;
+            //size_t send_time = 1e6 * num_bytes_sent / (115200/9);//+100000;
             //cout << "sleep_time " << send_time << endl;   // debug
-            usleep(send_time);
+            //usleep(send_time);
         }
         send_window.clear();
     }
@@ -700,7 +705,6 @@ void RadioManager::verify_crc(string data){/*{{{*/
             ack_id.push_back(id);
         }
 
-
         vector<Packet> replace_to_ack;
         size_t acks_remaining = ack_id.size();
         to_ack_mtx.lock();
@@ -756,6 +760,8 @@ void RadioManager::verify_crc(string data){/*{{{*/
             }
             last_was_acked = pkt.acked;
         }
+
+        m_num_sent += ack_id.size() - acks_remaining;
 
         if (resend_lock_owned){
             to_resend_mtx.unlock();

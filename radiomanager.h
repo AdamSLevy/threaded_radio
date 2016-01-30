@@ -93,7 +93,7 @@ typedef unsigned char byte;
 #define NUM_PKTS_PER_ACK 10
 #define MAX_ACK_SIZE (HEADER_SIZE + NUM_PKTS_PER_ACK + 2 + 2 + CRC_SIZE + FOOTER_SIZE)
 #define MAX_NUM_ATTEMPTS 20
-#define MAX_BYTES_PER_WRITE 500
+#define MAX_BYTES_PER_WRITE 8000//500
 #define READ_BUF_SIZE (MAX_ACK_SIZE * 4)
 #define MAX_ACKS_AUTO_RESEND 3
 
@@ -179,6 +179,8 @@ private:
 
     int m_ack_count;        // debug
     int m_bad_crc;          // debug
+    int m_num_resent;
+    int m_num_sent;
 
     struct termios m_oldConfig; // stores previous configuration
     struct termios m_config;    // stores existing configuration
