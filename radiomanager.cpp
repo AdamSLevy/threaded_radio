@@ -134,7 +134,6 @@ RadioManager::RadioManager(): HEADER(HEADER_HEX),FOOTER(FOOTER_HEX)/*{{{*/
 RadioManager::~RadioManager()/*{{{*/
 {
     close_serial();
-    PRINT_DEBUG;
     cout << " num pkts: " << num_pkts << endl;  // debug
     cout << " num acks received: " << m_ack_count << endl;  // debug
     cout << " num bad crc : " << m_bad_crc << endl; // debug
@@ -243,11 +242,9 @@ int RadioManager::close_serial()/*{{{*/
     }
 
     is_open = false;
-    PRINT_DEBUG;
     clear_queued_data();
     wake_write_loop();
 
-    PRINT_DEBUG;
     //cout << "close exit: " << exitCode << endl; // debug
 
     return exitCode;
@@ -256,7 +253,6 @@ int RadioManager::close_serial()/*{{{*/
 void RadioManager::wake_write_loop()/*{{{*/
 {
     if (write_cv_mtx.try_lock()){
-        PRINT_DEBUG;
         write_cv.notify_one();
         write_cv_mtx.unlock();
     }
@@ -376,7 +372,6 @@ void RadioManager::write_loop()/*{{{*/
         }
 
         if (!is_open){      // If the port has been marked as closed, end the thread
-            PRINT_DEBUG;
             return;
         }
 
@@ -491,8 +486,6 @@ void RadioManager::write_loop()/*{{{*/
         }
         send_window.clear();
     }
-    cout << "exiting the write thread, bottom" << endl; // debug
-                PRINT_DEBUG;
 }/*}}}*/
 
 void RadioManager::read_loop()/*{{{*/
@@ -510,17 +503,14 @@ void RadioManager::read_loop()/*{{{*/
         // read in new packet
         //cout << "wait " << endl;    // debug
         // check for bytes to be read
-        int select_ret = call_select(m_rfd, 2, 0);
-            PRINT_DEBUG;
+        int select_ret = call_select(m_rfd, 4, 0);
 
         // -1 indicates error so exit the thread
         if (select_ret < 0){
             is_open = false;    // set to false to notify other threads
-            PRINT_DEBUG;
             return;
         }
 
-            PRINT_DEBUG;
         // while there are bytes to read...
         while (select_ret > 0){
             int bytes_read = 0;
@@ -533,8 +523,6 @@ void RadioManager::read_loop()/*{{{*/
             // if error, exit the thread
             if (bytes_read < 0){
                 is_open = false;
-                //cout << "exit after read call < 0 " << endl; // debug
-                PRINT_DEBUG;
                 return;
             }
 
@@ -548,10 +536,9 @@ void RadioManager::read_loop()/*{{{*/
             //print_hex(read_buf, bytes_read); // debug
 
             in_data += string((char *)read_buf, bytes_read);
-            PRINT_DEBUG;
 
-            cout << "in_data: " << endl; // debug
-            print_hex((byte*)in_data.c_str(), in_data.size());  // debug
+            //cout << "in_data: " << endl; // debug
+            //print_hex((byte*)in_data.c_str(), in_data.size());  // debug
 
             if (bytes_read <= 4){
                 int n_end_foot = find_partial_end(footer, in_data);
@@ -566,7 +553,6 @@ void RadioManager::read_loop()/*{{{*/
                 continue;
             }
 
-            PRINT_DEBUG;
             size_t end_head_bytes = find_partial_end(in_data,header);
 
             //cout << "end head bytes " << end_head_bytes << endl;
@@ -599,7 +585,6 @@ void RadioManager::read_loop()/*{{{*/
                             n++;
                         }
                         verify_crc(current_pkt);
-            PRINT_DEBUG;
                     }
                 } else if (next_header_index == string::npos){
                     //cout << "partial pkt appending..." << endl;                             // debug
@@ -687,14 +672,12 @@ void RadioManager::read_loop()/*{{{*/
         }
     }
     //cout << "exit end of read " << endl;    // debug
-                PRINT_DEBUG;
 }/*}}}*/
 
 void RadioManager::verify_crc(string data){/*{{{*/
     CRC32 crc;
 
     if (data.size() < 6){
-        cout << "too short " << endl;
         return;
     }
 
@@ -709,7 +692,7 @@ void RadioManager::verify_crc(string data){/*{{{*/
     string computed_crc((char *)h,4);
 
     if (computed_crc == received_crc){
-        cout << "---- ack verified ------" << endl;     // debug
+        //cout << "---- ack verified ------" << endl;     // debug
         m_ack_count++;                  // debug
 
         // parse data into list of acknowledged packets
@@ -752,16 +735,16 @@ void RadioManager::verify_crc(string data){/*{{{*/
                         // pkt acknowledged
                         pkt.acked = true;   // mark for removal
                         acks_remaining--;
-                        cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                        //cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                     }
                 }
                 if (!pkt.acked){
                     if( last_was_acked || pkt.num_acks_passed == MAX_ACKS_AUTO_RESEND){
                         id.msg_id = pkt.data[ID_OFFSET];      // debug
                         id.pkt_id = pkt.data[ID_OFFSET+1];    // debug
-                        cout << "\t queued for resend msg: " << to_hex(id.msg_id)
-                            << " pkt: " << to_hex(id.pkt_id) << " send_rem: " << pkt.send_rem 
-                            << " num_acks_passed: " << pkt.num_acks_passed << endl; // debug
+                        //cout << "\t queued for resend msg: " << to_hex(id.msg_id)
+                            //<< " pkt: " << to_hex(id.pkt_id) << " send_rem: " << pkt.send_rem 
+                            //<< " num_acks_passed: " << pkt.num_acks_passed << endl; // debug
 
                         if (!resend_lock_owned){
                             to_resend_mtx.lock();
@@ -774,7 +757,7 @@ void RadioManager::verify_crc(string data){/*{{{*/
                     } else{
                         pkt.num_acks_passed++;
                         replace_to_ack.push_back(pkt);
-                        cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                        //cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                     }
                 }
             } else{
@@ -787,7 +770,7 @@ void RadioManager::verify_crc(string data){/*{{{*/
                     replace_to_ack.push_back(pkt);
                     id.msg_id = pkt.data[ID_OFFSET];
                     id.pkt_id = pkt.data[ID_OFFSET+1];
-                    cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                    //cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                 }
             }
             last_was_acked = pkt.acked;
@@ -801,16 +784,16 @@ void RadioManager::verify_crc(string data){/*{{{*/
         }
         to_ack = replace_to_ack;
 
-        cout << endl;
+        //cout << endl; // debug
 
         to_ack_mtx.unlock();
 
-        cout << endl; // debug
+        //cout << endl; // debug
 
 
     } else{
         m_bad_crc++;    // debug
-        cout << "not verified" << endl; // debug
+        //cout << "not verified" << endl; // debug
     }
 }/*}}}*/
 
