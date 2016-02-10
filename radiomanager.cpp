@@ -85,6 +85,40 @@ int call_select(int fd, size_t delay_sec, size_t delay_nsec)/*{{{*/
     return ret;
 }/*}}}*/
 
+int RadioManager::call_read_select()/*{{{*/
+{
+    if (m_rfd < 0 || !is_open){
+        return -1;
+    }
+
+    fd_set rfds;            // stores which fd's should be watched for bytes available to read
+    struct timespec tv;      // stores timeout for select
+    
+    FD_ZERO(&rfds);         // clear fd's
+    FD_SET(m_rfd, &rfds);    // add fd to rfds
+
+    // set delay
+    tv.tv_sec =  SELECT_SEC_DELAY;
+    tv.tv_nsec = SELECT_NSEC_DELAY;
+
+    //is_reading_mtx.lock();
+    cout << "enter pselect" << endl;
+    int ret = pselect(m_rfd+1, &rfds, nullptr, nullptr, &tv, nullptr);   // will return on bytes available or timeout
+    cout << "exit pselect" << endl;
+    //is_reading_mtx.unlock();
+
+    /*
+    if (ret < 0){
+        int errsv = errno;
+        cerr << "pselect: " << errsv << endl;     // debug
+        char buf[40];
+        strerror_r(errsv,buf,40);   // debug
+        cout << buf << endl;
+    }
+    */
+    return ret;
+}/*}}}*/
+
 size_t count(const string & to_search, const string & to_count){/*{{{*/
     size_t count = 0;
     if (to_search.size() < to_count.size()){
@@ -500,19 +534,8 @@ void RadioManager::read_loop()/*{{{*/
     m_bad_crc = 0;
 
     while (is_open){
-        // read in new packet
-        //cout << "wait " << endl;    // debug
-        // check for bytes to be read
-        int select_ret = call_select(m_rfd, 4, 0);
-
-        // -1 indicates error so exit the thread
-        if (select_ret < 0){
-            is_open = false;    // set to false to notify other threads
-            return;
-        }
-
         // while there are bytes to read...
-        while (select_ret > 0){
+        while (call_read_select() > 0){
             int bytes_read = 0;
 
             // read call
@@ -527,7 +550,6 @@ void RadioManager::read_loop()/*{{{*/
             }
 
             if (bytes_read == 0){
-                select_ret = call_select(m_rfd, 2, 0);
                 continue;
             }
             //cout << "bytes_read: " << bytes_read << endl;   // debug
@@ -549,7 +571,6 @@ void RadioManager::read_loop()/*{{{*/
                     partial_pkt = false;
                     in_data.clear();
                 }
-                select_ret = call_select(m_rfd, 2, 0);
                 continue;
             }
 
@@ -668,7 +689,17 @@ void RadioManager::read_loop()/*{{{*/
             } else{
                 in_data.clear();
             }
-            select_ret = call_select(m_rfd, 2, 0);
+        }
+        if(to_ack.size() > 0){
+            to_ack_mtx.lock();
+            to_resend_mtx.lock();
+            for( auto p : to_ack ){
+                to_resend.push_back(p);
+            }
+            to_ack.clear();
+            to_resend_mtx.unlock();
+            to_ack_mtx.unlock();
+            wake_write_loop();
         }
     }
     //cout << "exit end of read " << endl;    // debug
@@ -833,5 +864,10 @@ void RadioManager::clear_queued_data()/*{{{*/
 
 bool RadioManager::send_in_progress()/*{{{*/
 {
+    cout << "num to_send: " << to_send.size() << endl;
+    cout << "num to_resend: " << to_resend.size() << endl;
+    cout << "num send_window: " << send_window.size() << endl;
+    cout << "num to_ack: " << to_ack.size() << endl;
+    cout << "num to_ack_ack: " << to_ack_ack.size() << endl;
     return !(to_send.empty() && to_resend.empty() && send_window.empty() && to_ack_ack.empty() && to_ack.empty());
 }/*}}}*/

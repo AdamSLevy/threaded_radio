@@ -99,6 +99,8 @@ typedef unsigned char byte;
 #define MAX_ACKS_AUTO_RESEND 3
 #define WINDOW_BUF_SIZE ((NUM_PKTS_PER_ACK+1)*MAX_PKT_SIZE)
 
+#define SELECT_SEC_DELAY  4
+#define SELECT_NSEC_DELAY 0
 //#define r16(e)   r4( r4(e))
 //#define r32(e)   r2(r16(e))
 //#define r64(e)   r2(r32(e))
@@ -226,4 +228,6 @@ private:
     bool is_open;
 
     int num_pkts;
+
+    int call_read_select();
 };

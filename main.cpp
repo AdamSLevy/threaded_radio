@@ -120,9 +120,9 @@ START:
 
         if(total_bytes > 8240*3){
             //cout << "Total Sent: " << total_bytes << endl;
-            //while(radio.send_in_progress()){};
+            while(radio.send_in_progress()){sleep(4);};
 
-            sleep(30);
+            //sleep(30);
 
             radio.close_serial();
             return 0;
