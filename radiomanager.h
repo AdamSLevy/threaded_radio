@@ -41,6 +41,7 @@ using std::printf;
 #include <iostream>
 using std::endl;
 using std::cout;
+using std::cerr;
 #define PRINT_DEBUG {printf("\tFile: %s, Line: %i\n",__FILE__,__LINE__);}
 
 // PORT NAME
@@ -96,6 +97,7 @@ typedef unsigned char byte;
 #define MAX_BYTES_PER_WRITE 8000//500
 #define READ_BUF_SIZE (MAX_ACK_SIZE * 4)
 #define MAX_ACKS_AUTO_RESEND 3
+#define WINDOW_BUF_SIZE ((NUM_PKTS_PER_ACK+1)*MAX_PKT_SIZE)
 
 //#define r16(e)   r4( r4(e))
 //#define r32(e)   r2(r16(e))

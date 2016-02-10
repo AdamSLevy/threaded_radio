@@ -367,7 +367,7 @@ int RadioManager::queue_data(byte * data, const ulong num_bytes)/*{{{*/
 
 void RadioManager::write_loop()/*{{{*/
 {
-    byte window_buf[NUM_PKTS_PER_ACK*MAX_PKT_SIZE];
+    byte window_buf[WINDOW_BUF_SIZE];
     unique_lock<mutex> lck(write_cv_mtx);
     while ( is_open ){
         // If there is nothing to send, wait until notified
@@ -441,11 +441,17 @@ void RadioManager::write_loop()/*{{{*/
         // Copy the Packet::data to the continuous window_buf
         byte * window_ptr = window_buf;
         for (auto & pkt_iter : send_window){
-            pkt_iter.send_rem--;
-            memcpy(window_ptr,pkt_iter.data,pkt_iter.len);
-            //print_pkt(*pkt_iter); // debug
-            num_pkts++;
-            window_ptr += pkt_iter.len;
+            if(window_ptr + pkt_iter.len < window_buf + WINDOW_BUF_SIZE){
+                pkt_iter.send_rem--;
+                memcpy(window_ptr,pkt_iter.data,pkt_iter.len);
+                //print_pkt(*pkt_iter); // debug
+                num_pkts++;
+                window_ptr += pkt_iter.len;
+            } else{
+                cerr << "write_loop, window_buf, OVERFLOW PREVENTED" << endl;
+                PRINT_DEBUG;
+                break;
+            }
         }
         //print_hex(window_buf, window_ptr - window_buf);       // debug
 
@@ -462,7 +468,6 @@ void RadioManager::write_loop()/*{{{*/
 
             if (num_bytes_sent < 0){                     // indicates write error, set_is open to false, end the thread
                 is_open = false;
-                PRINT_DEBUG;
                 return;
             }
 
