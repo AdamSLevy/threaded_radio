@@ -85,39 +85,6 @@ int call_select(int fd, size_t delay_sec, size_t delay_nsec)/*{{{*/
     return ret;
 }/*}}}*/
 
-int RadioManager::call_read_select()/*{{{*/
-{
-    if (m_rfd < 0 || !is_open){
-        return -1;
-    }
-
-    fd_set rfds;            // stores which fd's should be watched for bytes available to read
-    struct timespec tv;      // stores timeout for select
-    
-    FD_ZERO(&rfds);         // clear fd's
-    FD_SET(m_rfd, &rfds);    // add fd to rfds
-
-    // set delay
-    tv.tv_sec =  SELECT_SEC_DELAY;
-    tv.tv_nsec = SELECT_NSEC_DELAY;
-
-    //is_reading_mtx.lock();
-    cout << "enter pselect" << endl;
-    int ret = pselect(m_rfd+1, &rfds, nullptr, nullptr, &tv, nullptr);   // will return on bytes available or timeout
-    cout << "exit pselect" << endl;
-    //is_reading_mtx.unlock();
-
-    /*
-    if (ret < 0){
-        int errsv = errno;
-        cerr << "pselect: " << errsv << endl;     // debug
-        char buf[40];
-        strerror_r(errsv,buf,40);   // debug
-        cout << buf << endl;
-    }
-    */
-    return ret;
-}/*}}}*/
 
 size_t count(const string & to_search, const string & to_count){/*{{{*/
     size_t count = 0;
@@ -440,9 +407,9 @@ void RadioManager::write_loop()/*{{{*/
             m_num_resent += resend_pkts_added;                          //debug
             to_resend.erase(to_resend.begin(),to_resend.begin()+resend_pkts_added);
         }
-        cout << "\t\t resend_pkts_added: " << resend_pkts_added << endl;            // debug
-        cout << "\t\t to_resend size: " << to_resend.size() << endl;                // debug
-        cout << "\t\t to_send size: " << to_send.size() << endl << endl << endl;    // debug
+        //cout << "\t\t resend_pkts_added: " << resend_pkts_added << endl;            // debug
+        //cout << "\t\t to_resend size: " << to_resend.size() << endl;                // debug
+        //cout << "\t\t to_send size: " << to_send.size() << endl << endl << endl;    // debug
         to_resend_mtx.unlock();
 
         // NEW DATA PKTS
@@ -703,6 +670,27 @@ void RadioManager::read_loop()/*{{{*/
         }
     }
     //cout << "exit end of read " << endl;    // debug
+}/*}}}*/
+
+int RadioManager::call_read_select()/*{{{*/
+{
+    if (m_rfd < 0 || !is_open){
+        return -1;
+    }
+
+    fd_set rfds;            // stores which fd's should be watched for bytes available to read
+    struct timespec tv;      // stores timeout for select
+    
+    FD_ZERO(&rfds);         // clear fd's
+    FD_SET(m_rfd, &rfds);    // add fd to rfds
+
+    // set delay
+    tv.tv_sec =  SELECT_SEC_DELAY;
+    tv.tv_nsec = SELECT_NSEC_DELAY;
+
+    int ret = pselect(m_rfd+1, &rfds, nullptr, nullptr, &tv, nullptr);   // will return on bytes available or timeout
+
+    return ret;
 }/*}}}*/
 
 void RadioManager::verify_crc(string data){/*{{{*/
