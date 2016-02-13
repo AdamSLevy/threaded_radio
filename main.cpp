@@ -9,31 +9,7 @@ using std::cout;
 using std::cin;
 using std::endl;
 
-struct RadioData{
-    // gps data
-    float lat;
-    float lon;
-    float alt;
-    float speed;
-    float course;
-    // none of these numbers will be bigger than 255
-    unsigned char num_sats;
-    unsigned char quality;
-    unsigned char year;
-    unsigned char month;
-    unsigned char day;
-    unsigned char hour;
-    unsigned char minute;
-    unsigned char second;
-    unsigned char darkMode;
-    char warnCode;
-
-    // spectrometer data
-    unsigned long fileNum;
-    short exposureTime;
-    unsigned char numExposures;
-    float spec[2048];
-};
+#include "radiodata.h"
 
 RadioManager * radio_ptr;
 
@@ -92,23 +68,23 @@ START:
     }
 
     data.fileNum = 0;
-    cout << "file num: "        << data.fileNum         << endl;
-    cout << "lat: "             << data.lat             << endl;
-    cout << "lon: "             << data.lon             << endl;
-    cout << "alt: "             << data.alt             << endl;
-    cout << "speed: "           << data.speed           << endl;
-    cout << "course: "          << data.course          << endl;
-    cout << "num_sats"          << data.num_sats        << endl;
-    cout << "quality"           << data.quality         << endl;
-    cout << "year"              << data.year            << endl;
-    cout << "month"             << data.month           << endl;
-    cout << "day"               << data.day             << endl;
-    cout << "hour"              << data.hour            << endl;
-    cout << "min"               << data.minute          << endl;
-    cout << "sec"               << data.second          << endl;
-    cout << "darkMode: "        << data.darkMode        << endl;
-    cout << "exposureTime: "    << data.exposureTime    << endl;
-    cout << "numExposures: "    << data.numExposures    << endl;
+    cout << "file num: "        << (unsigned int)data.fileNum         << endl;
+    cout << "lat: "             << (unsigned int)data.lat             << endl;
+    cout << "lon: "             << (unsigned int)data.lon             << endl;
+    cout << "alt: "             << (unsigned int)data.alt             << endl;
+    cout << "speed: "           << (unsigned int)data.speed           << endl;
+    cout << "course: "          << (unsigned int)data.course          << endl;
+    cout << "num_sats: "        << (unsigned int)data.num_sats        << endl;
+    cout << "quality: "         << (unsigned int)data.quality         << endl;
+    cout << "year: "            << (unsigned int)data.year            << endl;
+    cout << "month: "           << (unsigned int)data.month           << endl;
+    cout << "day: "             << (unsigned int)data.day             << endl;
+    cout << "hour: "            << (unsigned int)data.hour            << endl;
+    cout << "min: "             << (unsigned int)data.minute          << endl;
+    cout << "sec: "             << (unsigned int)data.second          << endl;
+    cout << "darkMode: "        << (unsigned int)data.darkMode        << endl;
+    cout << "exposureTime: "    << (unsigned int)data.exposureTime    << endl;
+    cout << "numExposures: "    << (unsigned int)data.numExposures    << endl;
 
     for(;;){
         for(int i = 0; i < 2048; i++){
@@ -135,7 +111,7 @@ START:
             goto START; // im a bad boy, but it works
         }
 
-        if(total_bytes > 8240*1){
+        if(total_bytes > 0){//8240*1){
             //cout << "Total Sent: " << total_bytes << endl;
             while(radio.send_in_progress()){sleep(4);};
 
