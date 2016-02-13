@@ -68,9 +68,9 @@ typedef unsigned char byte;
 #define CLOSE_FAIL          0x20
 #define IS_ALREADY_OPEN     0x40
 
-#define DATA_HEAD       0xFF
-#define COMMAND_HEAD    0xFF
-#define ACK_HEAD        0xFD
+#define DATA_HEAD       0xAF
+#define COMMAND_HEAD    0xAF
+#define ACK_HEAD        0xAD
 
 // Command codes
 #define SEND_SPEC_DATA  0xA2
