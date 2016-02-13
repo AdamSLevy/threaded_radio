@@ -24,8 +24,8 @@ struct RadioData{
     unsigned char day;
     unsigned char hour;
     unsigned char minute;
-    unsigned char darkMode;
     unsigned char second;
+    unsigned char darkMode;
     char warnCode;
 
     // spectrometer data
@@ -92,10 +92,27 @@ START:
     }
 
     data.fileNum = 0;
+    cout << "file num: "        << data.fileNum         << endl;
+    cout << "lat: "             << data.lat             << endl;
+    cout << "lon: "             << data.lon             << endl;
+    cout << "alt: "             << data.alt             << endl;
+    cout << "speed: "           << data.speed           << endl;
+    cout << "course: "          << data.course          << endl;
+    cout << "num_sats"          << data.num_sats        << endl;
+    cout << "quality"           << data.quality         << endl;
+    cout << "year"              << data.year            << endl;
+    cout << "month"             << data.month           << endl;
+    cout << "day"               << data.day             << endl;
+    cout << "hour"              << data.hour            << endl;
+    cout << "min"               << data.minute          << endl;
+    cout << "sec"               << data.second          << endl;
+    cout << "darkMode: "        << data.darkMode        << endl;
+    cout << "exposureTime: "    << data.exposureTime    << endl;
+    cout << "numExposures: "    << data.numExposures    << endl;
 
     for(;;){
         for(int i = 0; i < 2048; i++){
-            data.spec[i] = dist(gen);
+            data.spec[i] = i; //dist(gen);
         }
         data.fileNum++;
         int numBytes = radio.queue_data((byte*)&data,sizeof(RadioData));
@@ -118,7 +135,7 @@ START:
             goto START; // im a bad boy, but it works
         }
 
-        if(total_bytes > 8240*3){
+        if(total_bytes > 8240*1){
             //cout << "Total Sent: " << total_bytes << endl;
             while(radio.send_in_progress()){sleep(4);};
 
