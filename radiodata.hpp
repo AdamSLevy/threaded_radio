@@ -21,7 +21,7 @@ struct RadioData{
     char warnCode = 'A';
 
     // spectrometer data
-    unsigned long fileNum;
+    unsigned int fileNum;
     short exposureTime;
     unsigned char numExposures;
     float spec[2048];

@@ -11,6 +11,8 @@ using std::endl;
 
 #include "radiodata.hpp"
 
+void print_hex(byte * data, size_t len);
+
 RadioManager * radio_ptr;
 
 void clean_up(int s){
@@ -67,7 +69,27 @@ START:
         cout << "Serial setup code: " << errorCode << endl << endl;
     }
 
-    data.fileNum = 0;
+    data.fileNum        = 0;
+    data.lat            = 1;
+    data.lon            = 2;
+    data.alt            = 3;
+    data.speed          = 4;
+    data.course         = 5;
+    data.num_sats       = 6;
+    data.quality        = 7;
+    data.year           = 8;
+    data.month          = 9;
+    data.day            = 10;
+    data.hour           = 11;
+    data.minute         = 12;
+    data.second         = 13;
+    data.darkMode       = 14;
+    data.exposureTime   = 15;
+    data.numExposures   = 16;
+    for(int i = 0; i < 2048; i++){
+        data.spec[i] = i; //dist(gen);
+    }
+
     cout << "file num: "        << (unsigned int)data.fileNum         << endl;
     cout << "lat: "             << (unsigned int)data.lat             << endl;
     cout << "lon: "             << (unsigned int)data.lon             << endl;
@@ -83,8 +105,33 @@ START:
     cout << "min: "             << (unsigned int)data.minute          << endl;
     cout << "sec: "             << (unsigned int)data.second          << endl;
     cout << "darkMode: "        << (unsigned int)data.darkMode        << endl;
+    cout << "warnCode: "        << (unsigned int)data.warnCode        << endl;
     cout << "exposureTime: "    << (unsigned int)data.exposureTime    << endl;
     cout << "numExposures: "    << (unsigned int)data.numExposures    << endl;
+
+    print_hex((byte*)&data,sizeof(RadioData));
+
+    byte * start = (byte *)&data;
+
+    cout << "lat: "             << (size_t)((byte *)(&(data.lat           )) - start) << endl; print_hex((byte *)&data.lat,           sizeof(float));
+    cout << "lon: "             << (size_t)((byte *)(&(data.lon           )) - start) << endl; print_hex((byte *)&data.lon,           sizeof(float));
+    cout << "alt: "             << (size_t)((byte *)(&(data.alt           )) - start) << endl; print_hex((byte *)&data.alt,           sizeof(float));
+    cout << "speed: "           << (size_t)((byte *)(&(data.speed         )) - start) << endl; print_hex((byte *)&data.speed,         sizeof(float));
+    cout << "course: "          << (size_t)((byte *)(&(data.course        )) - start) << endl; print_hex((byte *)&data.course,        sizeof(float));
+    cout << "num_sats: "        << (size_t)((byte *)(&(data.num_sats      )) - start) << endl; print_hex((byte *)&data.num_sats,      sizeof(char));
+    cout << "quality: "         << (size_t)((byte *)(&(data.quality       )) - start) << endl; print_hex((byte *)&data.quality,       sizeof(char));
+    cout << "year: "            << (size_t)((byte *)(&(data.year          )) - start) << endl; print_hex((byte *)&data.year,          sizeof(char));
+    cout << "month: "           << (size_t)((byte *)(&(data.month         )) - start) << endl; print_hex((byte *)&data.month,         sizeof(char));
+    cout << "day: "             << (size_t)((byte *)(&(data.day           )) - start) << endl; print_hex((byte *)&data.day,           sizeof(char));
+    cout << "hour: "            << (size_t)((byte *)(&(data.hour          )) - start) << endl; print_hex((byte *)&data.hour,          sizeof(char));
+    cout << "min: "             << (size_t)((byte *)(&(data.minute        )) - start) << endl; print_hex((byte *)&data.minute,        sizeof(char));
+    cout << "sec: "             << (size_t)((byte *)(&(data.second        )) - start) << endl; print_hex((byte *)&data.second,        sizeof(char));
+    cout << "darkMode: "        << (size_t)((byte *)(&(data.darkMode      )) - start) << endl; print_hex((byte *)&data.darkMode,      sizeof(char));
+    cout << "warnCode: "        << (size_t)((byte *)(&(data.warnCode      )) - start) << endl; print_hex((byte *)&data.warnCode,      sizeof(char));
+    cout << "file num: "        << (size_t)((byte *)(&(data.fileNum       )) - start) << endl; print_hex((byte *)&data.fileNum,       sizeof(long));
+    cout << "exposureTime: "    << (size_t)((byte *)(&(data.exposureTime  )) - start) << endl; print_hex((byte *)&data.exposureTime,  sizeof(short));
+    cout << "numExposures: "    << (size_t)((byte *)(&(data.numExposures  )) - start) << endl; print_hex((byte *)&data.numExposures,  sizeof(char));
+    cout << "spec: "            << (size_t)((byte *)( data.spec            ) - start) << endl; print_hex((byte *) data.spec,          sizeof(float)*2048);
 
     for(;;){
         for(int i = 0; i < 2048; i++){

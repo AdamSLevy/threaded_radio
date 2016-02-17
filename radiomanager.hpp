@@ -46,8 +46,8 @@ using std::cerr;
 
 // PORT NAME
 #ifndef __APPLE__
-    #define DEFAULT_TTY_PORT_NAME "/dev/ttyS1"
-    //#define DEFAULT_TTY_PORT_NAME "/dev/ttyUSB0"
+    //#define DEFAULT_TTY_PORT_NAME "/dev/ttyS1"
+    #define DEFAULT_TTY_PORT_NAME "/dev/ttyUSB0"
 #endif
 #ifdef __APPLE__
     #define DEFAULT_TTY_PORT_NAME "/dev/cu.usbserial-A103N2XP"

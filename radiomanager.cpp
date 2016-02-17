@@ -24,7 +24,7 @@ void print_hex(byte * data, size_t len)/*{{{*/
         cout << hc << lc << " ";
         if (i%perLine == perLine - 1 && i!=len-1 ){
             cout << endl;
-            cout << setw(4) << i << ":  ";
+            cout << setw(4) << i + 1 << ":  ";
         }
     }
     cout << endl << endl;
