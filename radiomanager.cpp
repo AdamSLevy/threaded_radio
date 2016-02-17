@@ -277,14 +277,10 @@ int RadioManager::queue_data(byte * data, const ulong num_bytes)/*{{{*/
     size_t size_data_compressed = (num_bytes * 1.1) + 12;
     byte data_compressed[size_data_compressed];
     int z_result = compress( data_compressed, (uLongf *)&size_data_compressed, data, num_bytes);
-    size_t num_pkts = size_data_compressed / PKT_DATA_SIZE + 1;
+    size_t num_pkts = size_data_compressed / MAX_DATA_SIZE + 1;
     /*}}}*/
     if (Z_OK == z_result && num_pkts < MAX_ID){
         // set up 
-        if ((byte) num_pkts == MAX_ID){
-            return -1;
-        }
-
         size_t num_total_bytes_to_send = MSG_SIZE(size_data_compressed);
         
         size_t bytes_remaining = size_data_compressed;
@@ -294,6 +290,9 @@ int RadioManager::queue_data(byte * data, const ulong num_bytes)/*{{{*/
         // create HEAD PKT/*{{{*/
         byte * pkt_data = pkt_to_send[0].data;
 
+        // LENGTH OF PKT DATA
+        pkt_data[LEN_OFFSET] = HEAD_PKT_DATA_SIZE;
+        
         // ID
         pkt_data[ID_OFFSET]=msgID;
         pkt_data[ID_OFFSET+1]=pktID;
@@ -302,47 +301,44 @@ int RadioManager::queue_data(byte * data, const ulong num_bytes)/*{{{*/
         pkt_data[PKT_DATA_OFFSET] = (byte)num_pkts;
 
         crc.reset();
-        crc.add(data_compressed,size_data_compressed);
-        crc.getHash(pkt_data+PKT_DATA_OFFSET+1);
+        crc.add(data_compressed,size_data_compressed);  // compute crc of compressed data
+        crc.getHash(pkt_data+PKT_DATA_OFFSET+1);        // add crc bytes to pkt_data
 
         // PKT CRC
         crc.reset();
         crc.add(pkt_data+ID_OFFSET,ID_SIZE + HEAD_PKT_DATA_SIZE);
         crc.getHash(pkt_data+CRC_OFFSET(HEAD_PKT_DATA_SIZE));
 
-        pkt_to_send[pktID].len = HEAD_PKT_SIZE;
+        pkt_to_send[0].len = HEAD_PKT_SIZE;
         /*}}}*/
 
         // create remaining data filled packets /*{{{*/ 
         for (pktID = 1; pktID < num_pkts+1; pktID++){
-            size_t data_len = PKT_DATA_SIZE;
-            if (bytes_remaining < PKT_DATA_SIZE){
+            size_t data_len = MAX_DATA_SIZE;
+            if (bytes_remaining < MAX_DATA_SIZE){
                 data_len = bytes_remaining;
             }
             bytes_remaining -= data_len;
 
-            pkt_data = pkt_to_send[pktID].data;
             size_t pkt_len = PKT_SIZE(data_len);
             pkt_to_send[pktID].len = pkt_len;
+
+            pkt_data = pkt_to_send[pktID].data;
+
+            // LENGTH
+            pkt_data[LEN_OFFSET] = data_len;
 
             // ID
             pkt_data[ID_OFFSET]=msgID;
             pkt_data[ID_OFFSET+1]=pktID;
 
             // DATA
-            memcpy(pkt_data+PKT_DATA_OFFSET,data_compressed+(pktID-1)*PKT_DATA_SIZE, data_len);
+            memcpy(pkt_data+PKT_DATA_OFFSET,data_compressed+(pktID-1)*MAX_DATA_SIZE, data_len);
 
             // PKT CRC
             crc.reset();
             crc.add(pkt_data+ID_OFFSET,data_len+ID_SIZE);
             crc.getHash(pkt_data+CRC_OFFSET(data_len));
-
-            // FOOTER
-            if (data_len < PKT_DATA_SIZE){
-                for (int i = 0; i < FOOTER_SIZE; i++){
-                    pkt_data[FOOTER_OFFSET(data_len) + i]=foot_ptr[i];
-                }
-            }
         }
         /*}}}*/
 

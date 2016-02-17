@@ -68,31 +68,36 @@ typedef unsigned char byte;
 #define CLOSE_FAIL          0x20
 #define IS_ALREADY_OPEN     0x40
 
-#define HEADER_HEX 0xFaFfFfFa
-#define FOOTER_HEX 0xFeFfFfFe
+#define DATA_HEAD       0xFF
+#define COMMAND_HEAD    0xFF
+#define ACK_HEAD        0xFD
 
 #define MAX_ID 0xFF
 
-#define HEADER_SIZE     4
+#define HEADER_SIZE     1
+#define LEN_SIZE        1
 #define ID_SIZE         2
-#define PKT_DATA_SIZE 256
+#define MAX_DATA_SIZE 0xFF // 255
 #define CRC_SIZE        4
-#define FOOTER_SIZE     4
 
-#define PKT_SIZE(data_len)  (HEADER_SIZE + ID_SIZE + (data_len) + CRC_SIZE + FOOTER_SIZE)
-#define MSG_SIZE(data_len)  (HEAD_PKT_SIZE + MAX_PKT_SIZE * ((data_len) / PKT_DATA_SIZE) + PKT_SIZE((data_len) % PKT_DATA_SIZE))
-#define MAX_PKT_SIZE        PKT_SIZE(PKT_DATA_SIZE)
+static_assert(MAX_DATA_SIZE <= 0xFF, "MAX_DATA_SIZE is too large for the LEN_SIZE (1 byte). \n"  \
+                                        "You must implement a 2 byte LEN for larger MAX_DATA_SIZE"); // must increase to 2 len bytes for > 256 pkt data size
+
+#define PKT_SIZE(data_len)  (HEADER_SIZE + LEN_SIZE + ID_SIZE + (data_len) + CRC_SIZE)
+#define MSG_SIZE(data_len)  (HEAD_PKT_SIZE + MAX_PKT_SIZE * ((data_len) / MAX_DATA_SIZE) + PKT_SIZE((data_len) % MAX_DATA_SIZE))
+#define MAX_PKT_SIZE        PKT_SIZE(MAX_DATA_SIZE)
 #define HEAD_PKT_DATA_SIZE  1 + 4 // 1 for num_pkts, 4 for message crc
 #define HEAD_PKT_SIZE       PKT_SIZE(HEAD_PKT_DATA_SIZE)
 
 // for standard packet with full data
-#define ID_OFFSET                   HEADER_SIZE
+#define LEN_OFFSET                  HEADER_SIZE
+#define ID_OFFSET                   (LEN_OFFSET + LEN_SIZE)
 #define PKT_DATA_OFFSET             (ID_OFFSET+ID_SIZE)
 #define CRC_OFFSET(data_len)        (PKT_DATA_OFFSET+(data_len))
 #define FOOTER_OFFSET(data_len)     (CRC_OFFSET(data_len)+CRC_SIZE)
 
 #define NUM_PKTS_PER_ACK 10
-#define MAX_ACK_SIZE (HEADER_SIZE + NUM_PKTS_PER_ACK + 2 + 2 + CRC_SIZE + FOOTER_SIZE)
+#define MAX_ACK_SIZE (HEADER_SIZE + LEN_SIZE + NUM_PKTS_PER_ACK + 2 + 2 + CRC_SIZE)
 #define MAX_NUM_ATTEMPTS 20
 #define MAX_BYTES_PER_WRITE 8000//500
 #define READ_BUF_SIZE (MAX_ACK_SIZE * 4)
@@ -106,9 +111,6 @@ typedef unsigned char byte;
 //#define r64(e)   r2(r32(e))
 //#define r256(e) r16(r16(e))
 
-#define HEADER_INIT 0xFA,r2(0xFF),0xFA
-#define FOOTER_INIT 0xFE,r2(0xFF),0xFE
-
 #define r2(e)    e,e
 #define r4(e)    r2( r2(e) )
 #define r8(e)    r2( r4(e) )
@@ -118,7 +120,7 @@ typedef unsigned char byte;
 
 // The below macro magic generates a static initialization of the data
 // which automatically resizes according to however the max pkt data
-// is set in the above macros, such as PKT_DATA_SIZE which are used to 
+// is set in the above macros, such as MAX_DATA_SIZE which are used to 
 // compute MAX_PKT_SIZE. The static initialization allows the headers
 // and footers to be in place whenever a new Packet object is created.
 // Footers are placed to accomodate the HEAD_PKT_SIZE and MAX_PKT_SIZE
@@ -139,11 +141,11 @@ struct Packet{
     size_t send_rem         = MAX_NUM_ATTEMPTS;
     size_t num_acks_passed  = 0;
     bool acked              = false;
-    byte data[MAX_PKT_SIZE] = { HEAD_PKT_INIT,
+    byte data[MAX_PKT_SIZE] = { DATA_HEAD, MAX_DATA_SIZE
                                     #define STATIC_INIT_VALUE 0x00
-                                    #define STATIC_INIT_COUNT (MAX_PKT_SIZE - HEAD_PKT_SIZE - FOOTER_SIZE)
+                                    #define STATIC_INIT_COUNT (MAX_PKT_SIZE - ID_OFFSET)
                                     #include "static_init.h"
-                                FOOTER_INIT};
+                               };
 };
 
 struct AwaitingAck{
