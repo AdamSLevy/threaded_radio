@@ -111,7 +111,7 @@ START:
             goto START; // im a bad boy, but it works
         }
 
-        if(total_bytes > 0){//8240*1){
+        if(total_bytes > 8240*10){
             //cout << "Total Sent: " << total_bytes << endl;
             while(radio.send_in_progress()){sleep(4);};
 

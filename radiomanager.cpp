@@ -490,123 +490,133 @@ void RadioManager::read_loop()/*{{{*/
     bool state = SEEK;
     byte pkt_type = SEEK;
     size_t pkt_read_pos = 0;
-    int length = 0;
+    size_t length = 0;
     string pkt_data;             // holds the packet data starting at the ID, excluding header and footer
     string in_data;                 // holds the latest data from read_buf, allows prefacing with broken headers
     m_ack_count = 0;
     m_bad_crc = 0;
+    int times_hit = 0;
 
     while (is_open){
         // while there are bytes to read...
         while (call_read_select() > 0){
-            int bytes_read = 0;
+            int bytes_read = 1;
+            while(bytes_read != 0){
+                // read call
+                is_reading_mtx.lock();
+                bytes_read = read(m_rfd, read_buf, READ_BUF_SIZE);
+                is_reading_mtx.unlock();
 
-            // read call
-            is_reading_mtx.lock();
-            bytes_read = read(m_rfd, read_buf, READ_BUF_SIZE);
-            is_reading_mtx.unlock();
+                // if error, exit the thread
+                if (bytes_read < 0){
+                    is_open = false;
+                    return;
+                }
 
-            // if error, exit the thread
-            if (bytes_read < 0){
-                is_open = false;
-                return;
-            }
+                if (bytes_read == 0){
+                    continue;
+                }
+                //cout << "bytes_read: " << bytes_read << endl;   // debug
 
-            if (bytes_read == 0){
-                continue;
-            }
-            //cout << "bytes_read: " << bytes_read << endl;   // debug
+                //cout << "read_buf:" << endl;    // debug
+                //print_hex(read_buf, bytes_read); // debug
 
-            //cout << "read_buf:" << endl;    // debug
-            //print_hex(read_buf, bytes_read); // debug
+                in_data = string((char *)read_buf, bytes_read);
+                cout << "read_buf: " << endl;
+                print_hex((byte*)read_buf,bytes_read);
 
-            in_data = string((char *)read_buf, bytes_read);
+                for (size_t i = 0; i < in_data.size(); i++){
+                    if (state == SEEK){
+                        pkt_type = 0;
+                        pkt_read_pos = 0;
+                        length = 0;
+                        pkt_data.clear();
 
-            for (int i = 0; i < in_data.size(); i++){
-                if (state == SEEK){
-                    pkt_type = 0;
-                    pkt_read_pos = 0;
-                    length = 0;
-                    pkt_data.clear();
+                        size_t nextHeaderIndex_ack     = in_data.find_first_of(ACK_HEAD, i);
+                        size_t nextHeaderIndex_command = in_data.find_first_of(COMMAND_HEAD, i);
 
-                    int nextHeaderIndex_ack     = in_data.find_first_of(ACK_HEAD, i);
-                    int nextHeaderIndex_command = in_data.find_first_of(COMMAND_HEAD, i);
-
-                    int nextHeaderIndex;
-                    if (nextHeaderIndex_ack != string::npos){
-                        if (nextHeaderIndex_command == -1){
-                            nextHeaderIndex = nextHeaderIndex_ack;
+                        size_t nextHeaderIndex;
+                        if (nextHeaderIndex_ack != string::npos){
+                            if (nextHeaderIndex_command == string::npos){
+                                nextHeaderIndex = nextHeaderIndex_ack;
+                            } else{
+                                nextHeaderIndex = std::min(nextHeaderIndex_ack, nextHeaderIndex_command);
+                            }
                         } else{
-                            nextHeaderIndex = std::min(nextHeaderIndex_ack, nextHeaderIndex_command);
+                            nextHeaderIndex = nextHeaderIndex_command;
                         }
-                    } else{
-                        nextHeaderIndex = nextHeaderIndex_command;
-                    }
 
-                    if (nextHeaderIndex == -1){     // There are no headers in in_data
-                        break;
-                    } else{
-                        i = nextHeaderIndex;
-                        const byte bb = in_data[i];
-                        if (bb == ACK_HEAD || bb == COMMAND_HEAD){
-                            state = READ;
-                            pkt_type = bb;
+                        if (nextHeaderIndex == string::npos){     // There are no headers in in_data
+                            break;
+                        } else{
+                            i = nextHeaderIndex;
+                            const byte bb = in_data[i];
+                            if (bb == ACK_HEAD || bb == COMMAND_HEAD){
+                                state = READ;
+                                pkt_type = bb;
+                            }
                         }
-                    }
-                } else{
-                    const byte bb = in_data[i];
-                    if (pkt_type == ACK_HEAD){
-                        switch (pkt_read_pos){
-                            case 0:
-                                length = bb;
-                                length += CRC_SIZE;
-                                pkt_read_pos++;
-                                break;
-                            case 1:{
-                                string append_data = in_data.substr(i, length - pkt_data.size());
-                                i += append_data.size() - 1;
-                                pkt_data += append_data;
-                                if (pkt_data.size() >= length){
-                                    verify_crc(pkt_data);
+                    } else{
+                        const byte bb = in_data[i];
+                        if (pkt_type == ACK_HEAD){
+                            switch (pkt_read_pos){
+                                case 0:
+                                    length = bb;
+                                    length += CRC_SIZE;
+                                    pkt_read_pos++;
+                                    break;
+                                case 1:{
+                                    string append_data = in_data.substr(i, length - pkt_data.size());
+                                    i += append_data.size() - 1;
+                                    pkt_data += append_data;
+                                    if (pkt_data.size() >= length){
+                                        verify_crc(pkt_data);
+                                        state = SEEK;
+                                    }
+                                    break;}
+                                default:
                                     state = SEEK;
-                                }
-                                break;}
-                            default:
-                                state = SEEK;
-                                break;
+                                    break;
+                            }
+                        } else if(pkt_type == COMMAND_HEAD){
+                            const byte bb = in_data[i];
+                            switch (bb){
+                                case STOP_SEND:
+                                    // set to stop sending
+                                    //break;
+                                case SEND_TELEM_ONLY:
+                                    // set to only send telem
+                                    //break;
+                                case SEND_SPEC_DATA:
+                                    // set to send all
+                                    //break;
+                                default:
+                                    break;
+                            }
+                            state = SEEK;
+                        } else{
+                            state = SEEK;
                         }
-                    } else if(pkt_type == COMMAND_HEAD){
-                        const byte bb = in_data[i];
-                        switch (bb){
-                            case STOP_SEND:
-                                // set to stop sending
-                                //break;
-                            case SEND_TELEM_ONLY:
-                                // set to only send telem
-                                //break;
-                            case SEND_SPEC_DATA:
-                                // set to send all
-                                //break;
-                            default:
-                                break;
-                        }
-                        state = SEEK;
-                    } else{
-                        state = SEEK;
                     }
                 }
             }
         }
-        if(to_ack.size() > 0){
+        if(to_ack.size() > 0 && times_hit > 1){
+            times_hit = 0;
             to_ack_mtx.lock();
             to_resend_mtx.lock();
-            for( auto p : to_ack ){
+            for( Packet p : to_ack ){
                 to_resend.push_back(p);
+                cout << "\t queued for resend msg: " << to_hex(p.data[ID_OFFSET])
+                    << " pkt: " << to_hex(p.data[ID_OFFSET+1]) << " send_rem: " << p.send_rem 
+                    << " num_acks_passed: " << p.num_acks_passed << endl; // debug
             }
             to_ack.clear();
             to_resend_mtx.unlock();
             to_ack_mtx.unlock();
             wake_write_loop();
+        } else{
+            times_hit++;
         }
     }
     //cout << "exit end of read " << endl;    // debug
@@ -651,7 +661,8 @@ void RadioManager::verify_crc(string data){/*{{{*/
     string computed_crc((char *)h,4);
 
     if (computed_crc == received_crc){
-        //cout << "---- ack verified ------" << endl;     // debug
+        cout << "---- ack verified ------" << endl;     // debug
+        print_hex((byte*)data.c_str(),data.size());
         m_ack_count++;                  // debug
 
         // parse data into list of acknowledged packets
@@ -683,7 +694,6 @@ void RadioManager::verify_crc(string data){/*{{{*/
         size_t acks_remaining = ack_id.size();
         to_ack_mtx.lock();
         bool resend_lock_owned = false;
-        bool last_was_acked = false;
         for (auto pkt : to_ack){
             if (acks_remaining){
                 id.msg_id = pkt.data[ID_OFFSET];
@@ -694,16 +704,16 @@ void RadioManager::verify_crc(string data){/*{{{*/
                         // pkt acknowledged
                         pkt.acked = true;   // mark for removal
                         acks_remaining--;
-                        //cout << "acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                        cout << "!Acknowledged msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                     }
                 }
                 if (!pkt.acked){
-                    if( last_was_acked || pkt.num_acks_passed == MAX_ACKS_AUTO_RESEND){
+                    if( acks_remaining < ack_id.size() || pkt.num_acks_passed == MAX_ACKS_AUTO_RESEND){
                         id.msg_id = pkt.data[ID_OFFSET];      // debug
                         id.pkt_id = pkt.data[ID_OFFSET+1];    // debug
-                        //cout << "\t queued for resend msg: " << to_hex(id.msg_id)
-                            //<< " pkt: " << to_hex(id.pkt_id) << " send_rem: " << pkt.send_rem 
-                            //<< " num_acks_passed: " << pkt.num_acks_passed << endl; // debug
+                        cout << "\t queued for resend msg: " << to_hex(id.msg_id)
+                            << " pkt: " << to_hex(id.pkt_id) << " send_rem: " << pkt.send_rem 
+                            << " num_acks_passed: " << pkt.num_acks_passed << endl; // debug
 
                         if (!resend_lock_owned){
                             to_resend_mtx.lock();
@@ -716,7 +726,7 @@ void RadioManager::verify_crc(string data){/*{{{*/
                     } else{
                         pkt.num_acks_passed++;
                         replace_to_ack.push_back(pkt);
-                        //cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                        cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                     }
                 }
             } else{
@@ -729,10 +739,9 @@ void RadioManager::verify_crc(string data){/*{{{*/
                     replace_to_ack.push_back(pkt);
                     id.msg_id = pkt.data[ID_OFFSET];
                     id.pkt_id = pkt.data[ID_OFFSET+1];
-                    //cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                    cout << "awaiting ack msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
                 }
             }
-            last_was_acked = pkt.acked;
         }
 
         m_num_sent += ack_id.size() - acks_remaining;
@@ -743,16 +752,16 @@ void RadioManager::verify_crc(string data){/*{{{*/
         }
         to_ack = replace_to_ack;
 
-        //cout << endl; // debug
+        cout << endl; // debug
 
         to_ack_mtx.unlock();
 
-        //cout << endl; // debug
+        cout << endl; // debug
 
 
     } else{
         m_bad_crc++;    // debug
-        //cout << "not verified" << endl; // debug
+        cout << "not verified" << endl; // debug
     }
 }/*}}}*/
 
