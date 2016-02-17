@@ -531,9 +531,71 @@ void RadioManager::read_loop()/*{{{*/
 
                     int nextHeaderIndex_ack     = in_data.find_first_of(ACK_HEAD, i);
                     int nextHeaderIndex_command = in_data.find_first_of(COMMAND_HEAD, i);
+
+                    int nextHeaderIndex;
+                    if (nextHeaderIndex_ack != string::npos){
+                        if (nextHeaderIndex_command == -1){
+                            nextHeaderIndex = nextHeaderIndex_ack;
+                        } else{
+                            nextHeaderIndex = std::min(nextHeaderIndex_ack, nextHeaderIndex_command);
+                        }
+                    } else{
+                        nextHeaderIndex = nextHeaderIndex_command;
+                    }
+
+                    if (nextHeaderIndex == -1){     // There are no headers in in_data
+                        break;
+                    } else{
+                        i = nextHeaderIndex;
+                        const byte bb = in_data[i];
+                        if (bb == ACK_HEAD || bb == COMMAND_HEAD){
+                            state = READ;
+                            pkt_type = ACK_HEAD;
+                        }
+                    }
+                } else{
+                    const byte bb = in_data[i];
+                    if (pkt_type == ACK_HEAD){
+                        switch (pkt_read_pos){
+                            case 0:
+                                length = bb;
+                                length += ID_SIZE + CRC_SIZE;
+                                pkt_read_pos++;
+                                break;
+                            case 1:{
+                                string append_data = in_data.substr(i, length - pkt_data.size());
+                                i += append_data.size() - 1;
+                                pkt_data += append_data;
+                                if (pkt_data.size() >= length){
+                                    verify_crc(pkt_data);
+                                    state = SEEK;
+                                }
+                                break;}
+                            default:
+                                state = SEEK;
+                                break;
+                        }
+                    } else if(pkt_type == COMMAND_HEAD){
+                        const byte bb = in_data[i];
+                        switch (bb){
+                            case STOP_SEND:
+                                // set to stop sending
+                                //break;
+                            case SEND_TELEM_ONLY:
+                                // set to only send telem
+                                //break;
+                            case SEND_SPEC_DATA:
+                                // set to send all
+                                //break;
+                            default:
+                                break;
+                        }
+                        state = SEEK;
+                    } else{
+                        state = SEEK;
+                    }
                 }
             }
-
         }
         if(to_ack.size() > 0){
             to_ack_mtx.lock();

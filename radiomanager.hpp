@@ -72,6 +72,11 @@ typedef unsigned char byte;
 #define COMMAND_HEAD    0xFF
 #define ACK_HEAD        0xFD
 
+// Command codes
+#define SEND_SPEC_DATA  0xA2
+#define SEND_TELEM_ONLY 0xA1
+#define STOP_SEND       0xA0
+
 #define SEEK 0
 #define READ 1
 
