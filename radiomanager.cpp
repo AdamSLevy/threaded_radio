@@ -1,4 +1,4 @@
-#include "radiomanager.h"
+#include "radiomanager.hpp"
 
 // V************* debug functions *********************************************V/*{{{*/
 void print_hex(byte * data, size_t len)/*{{{*/

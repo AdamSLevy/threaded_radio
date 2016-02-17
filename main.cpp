@@ -1,4 +1,4 @@
-#include "radiomanager.h"
+#include "radiomanager.hpp"
 #include <thread>
 #include <chrono>
 #include <unistd.h>
@@ -9,7 +9,7 @@ using std::cout;
 using std::cin;
 using std::endl;
 
-#include "radiodata.h"
+#include "radiodata.hpp"
 
 RadioManager * radio_ptr;
 
