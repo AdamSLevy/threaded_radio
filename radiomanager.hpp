@@ -72,6 +72,9 @@ typedef unsigned char byte;
 #define COMMAND_HEAD    0xFF
 #define ACK_HEAD        0xFD
 
+#define SEEK 0
+#define READ 1
+
 #define MAX_ID 0xFF
 
 #define HEADER_SIZE     1
@@ -141,7 +144,7 @@ struct Packet{
     size_t send_rem         = MAX_NUM_ATTEMPTS;
     size_t num_acks_passed  = 0;
     bool acked              = false;
-    byte data[MAX_PKT_SIZE] = { DATA_HEAD, MAX_DATA_SIZE
+    byte data[MAX_PKT_SIZE] = { DATA_HEAD, MAX_DATA_SIZE,
                                     #define STATIC_INIT_VALUE 0x00
                                     #define STATIC_INIT_COUNT (MAX_PKT_SIZE - ID_OFFSET)
                                     #include "static_init.h"
@@ -191,9 +194,6 @@ private:
     struct termios m_oldConfig; // stores previous configuration
     struct termios m_config;    // stores existing configuration
     string m_port_name;         // stores the port name/path i.e. "/dev/ttyUSB0"
-
-    const ulong HEADER;
-    const ulong FOOTER;
 
     // Populated by send(), emptied by write_loop()
     vector<Packet> to_send;         // Holds new Packets awaiting to be sent

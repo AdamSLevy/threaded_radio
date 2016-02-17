@@ -119,7 +119,7 @@ size_t find_partial_end( const string & to_search, const string & to_find )/*{{{
 // ^************** end helper NON RadioManager functions ***********************************^/*}}}*/
 
 // V************** RadioManager member functions *******************************************V
-RadioManager::RadioManager(): HEADER(HEADER_HEX),FOOTER(FOOTER_HEX)/*{{{*/
+RadioManager::RadioManager() /*{{{*/
 {
     m_port_name = DEFAULT_TTY_PORT_NAME;
 
@@ -262,7 +262,6 @@ void RadioManager::wake_write_loop()/*{{{*/
 int RadioManager::queue_data(byte * data, const ulong num_bytes)/*{{{*/
 {
     static byte msgID = 0;/*{{{*/
-    const byte * foot_ptr = (byte *)(&FOOTER);
     CRC32 crc;
     
     int num_sent = -1;
@@ -488,11 +487,12 @@ void RadioManager::write_loop()/*{{{*/
 void RadioManager::read_loop()/*{{{*/
 {
     byte read_buf[READ_BUF_SIZE];   // used for read() call
-    bool partial_pkt = false;       // denotes whether current_pkt is awaiting completion
-    string current_pkt;             // holds the packet data starting at the ID, excluding header and footer
+    bool state = SEEK;
+    byte pkt_type = SEEK;
+    size_t pkt_read_pos = 0;
+    int length = 0;
+    string pkt_data;             // holds the packet data starting at the ID, excluding header and footer
     string in_data;                 // holds the latest data from read_buf, allows prefacing with broken headers
-    const string header((char *)(&HEADER),4);     // header bytes
-    const string footer((char *)(&FOOTER),4);     // footer bytes
     m_ack_count = 0;
     m_bad_crc = 0;
 
@@ -520,138 +520,20 @@ void RadioManager::read_loop()/*{{{*/
             //cout << "read_buf:" << endl;    // debug
             //print_hex(read_buf, bytes_read); // debug
 
-            in_data += string((char *)read_buf, bytes_read);
+            in_data = string((char *)read_buf, bytes_read);
 
-            //cout << "in_data: " << endl; // debug
-            //print_hex((byte*)in_data.c_str(), in_data.size());  // debug
+            for (int i = 0; i < in_data.size(); i++){
+                if (state == SEEK){
+                    pkt_type = 0;
+                    pkt_read_pos = 0;
+                    length = 0;
+                    pkt_data.clear();
 
-            if (bytes_read <= 4){
-                int n_end_foot = find_partial_end(footer, in_data);
-                int n_end_pkt = find_partial_end(current_pkt, footer);
-                if (partial_pkt && n_end_foot + n_end_pkt == 4){
-                    current_pkt.resize(current_pkt.size() - n_end_pkt);
-                    verify_crc(current_pkt);
-                    partial_pkt = false;
-                    in_data.clear();
-                }
-                continue;
-            }
-
-            size_t end_head_bytes = find_partial_end(in_data,header);
-
-            //cout << "end head bytes " << end_head_bytes << endl;
-
-
-            size_t search_from = 0;
-            if (partial_pkt){
-                partial_pkt = false;
-                //cout << "has partial pkt" << endl; // debug
-                size_t footer_index = in_data.find(footer);
-                size_t next_header_index = in_data.find(header,0);
-
-                if (footer_index != string::npos){
-                    if (next_header_index == string::npos || footer_index < next_header_index){
-                        current_pkt += string((char *)in_data.c_str(),footer_index);
-                        //cout << "partial pkt completed, no next head, or foot < head" << endl;  // debug
-                        //print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
-                        verify_crc(current_pkt);
-                    } else{
-                        //cout << "partial pkt bad: foot > head" << endl;                         // debug
-                        //print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
-                        current_pkt += string((char *)in_data.c_str(), next_header_index);
-                        // since we couldn't find a footer it's likely that the footer was corrupted
-                        // so I pull off any footer bytes in the hopes that the pkt will be okay
-                        char bb = *current_pkt.end();
-                        size_t n = 0;
-                        while ((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
-                            current_pkt.pop_back();
-                            bb = *current_pkt.end();
-                            n++;
-                        }
-                        verify_crc(current_pkt);
-                    }
-                } else if (next_header_index == string::npos){
-                    //cout << "partial pkt appending..." << endl;                             // debug
-                    //print_hex((byte*)current_pkt.c_str(),current_pkt.size());               // debug
-                    current_pkt += in_data;
-                    partial_pkt = true;
-                } else{
-                    //cout << "DROPPED PACKET partial pkt bad footer not found"<< endl;     // debug
-                    //print_hex((byte*)current_pkt.c_str(),current_pkt.size());             // debug
-                    current_pkt += string((char *)in_data.c_str(), next_header_index);
-                    // since we couldn't find a footer it's likely that the footer was corrupted
-                    // so I pull off any footer bytes in the hopes that the pkt will be okay
-                    char bb = *current_pkt.end();
-                    size_t n = 0;
-                    while ((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
-                        current_pkt.pop_back();
-                        bb = *current_pkt.end();
-                        n++;
-                    }
-                    verify_crc(current_pkt);
-                }
-                if (next_header_index != string::npos){
-                    search_from = next_header_index;
+                    int nextHeaderIndex_ack     = in_data.find_first_of(ACK_HEAD, i);
+                    int nextHeaderIndex_command = in_data.find_first_of(COMMAND_HEAD, i);
                 }
             }
 
-            size_t num_headers = count(in_data, header);
-            //cout << "num_headers : " << num_headers << endl;
-
-            for (size_t i = 0; i < num_headers; i++){
-                //cout << "for loop " << i << endl;   // debug
-                size_t header_index = in_data.find(header,search_from);
-                size_t footer_index = in_data.find(footer,header_index);
-                size_t next_header_index = in_data.find(header,header_index+4);
-
-                if (footer_index != string::npos){
-                    if (next_header_index == string::npos || footer_index < next_header_index){
-                        //cout << "for loop framed: " << endl; // debug
-                        //print_hex((byte*)(in_data.c_str() + header_index + 4), footer_index - header_index - 4);    // debug
-                        current_pkt = string(in_data.c_str() + header_index + 4, footer_index - header_index - 4);
-                        verify_crc(current_pkt);
-                    } else{
-                        current_pkt = string((char *)(in_data.c_str() + header_index + 4), next_header_index - header_index - 4);
-                        // since we couldn't find a footer it's likely that the footer was corrupted
-                        // so I pull off any footer bytes in the hopes that the pkt will be okay
-                        char bb = *current_pkt.end();
-                        size_t n = 0;
-                        while ((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
-                            current_pkt.pop_back();
-                            bb = *current_pkt.end();
-                            n++;
-                        }
-                        verify_crc(current_pkt);
-                    }
-                } else if (next_header_index == string::npos){
-                    //cout << "for loop start partial: " << endl; // debug
-                    //print_hex((byte*)(in_data.c_str() + header_index + 4),in_data.size() - header_index - 4);
-                    current_pkt = string((char *)(in_data.c_str() + header_index + 4),in_data.size() - header_index - 4);
-                    if (current_pkt.size() > 0)
-                        partial_pkt = true;
-                } else{
-                    //cout << "MISFRAMED PACKET!" << endl;
-                    current_pkt = string((char *)(in_data.c_str() + header_index + 4), next_header_index - header_index - 4);
-                    // since we couldn't find a footer it's likely that the footer was corrupted
-                    // so I pull off any footer bytes in the hopes that the pkt will be okay
-                    char bb = *current_pkt.end();
-                    size_t n = 0;
-                    while ((bb == (char)0xFF || bb == (char)0xFE) && current_pkt.size() > 0 && n < 4){
-                        current_pkt.pop_back();
-                        bb = *current_pkt.end();
-                        n++;
-                    }
-                    verify_crc(current_pkt);
-                }
-                if (next_header_index != string::npos){
-                    search_from = next_header_index;
-                }
-            }
-            if (end_head_bytes){
-                in_data = string(header,end_head_bytes);
-            } else{
-                in_data.clear();
-            }
         }
         if(to_ack.size() > 0){
             to_ack_mtx.lock();
@@ -814,13 +696,14 @@ void RadioManager::verify_crc(string data){/*{{{*/
 
 void RadioManager::ack_ack(MsgPktID id){/*{{{*/
     Packet ack;
+    ack.data[0] = ACK_HEAD;
+    ack.data[LEN_OFFSET] = 0;
     ack.data[ID_OFFSET] = id.msg_id;
     ack.data[ID_OFFSET+1] = id.pkt_id;
     CRC32 crc;
     crc.reset();
     crc.add(ack.data + ID_OFFSET, 2);
     crc.getHash(ack.data+CRC_OFFSET(0));
-    memcpy(ack.data + FOOTER_OFFSET(0), (byte*)(&FOOTER), 4);
     ack.len = PKT_SIZE(0);
 
     to_ack_ack_mtx.lock();
