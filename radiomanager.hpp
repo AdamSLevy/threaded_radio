@@ -46,8 +46,8 @@ using std::cerr;
 
 // PORT NAME
 #ifndef __APPLE__
-    #define DEFAULT_TTY_PORT_NAME "/dev/ttyS1"
-    //#define DEFAULT_TTY_PORT_NAME "/dev/ttyUSB0"
+    //#define DEFAULT_TTY_PORT_NAME "/dev/ttyS1"
+    #define DEFAULT_TTY_PORT_NAME "/dev/ttyUSB0"
 #endif
 #ifdef __APPLE__
     #define DEFAULT_TTY_PORT_NAME "/dev/cu.usbserial-A103N2XP"
@@ -114,17 +114,6 @@ static_assert(MAX_DATA_SIZE <= 0xFF, "MAX_DATA_SIZE is too large for the LEN_SIZ
 
 #define SELECT_SEC_DELAY  4
 #define SELECT_NSEC_DELAY 0
-//#define r16(e)   r4( r4(e))
-//#define r32(e)   r2(r16(e))
-//#define r64(e)   r2(r32(e))
-//#define r256(e) r16(r16(e))
-
-#define r2(e)    e,e
-#define r4(e)    r2( r2(e) )
-#define r8(e)    r2( r4(e) )
-#define r11(e)  r8(e),r2(e),e
-
-#define HEAD_PKT_INIT HEADER_INIT,r11(0x00),FOOTER_INIT     // takes up 19 bytes
 
 // The below macro magic generates a static initialization of the data
 // which automatically resizes according to however the max pkt data

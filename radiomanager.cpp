@@ -550,7 +550,7 @@ void RadioManager::read_loop()/*{{{*/
                         const byte bb = in_data[i];
                         if (bb == ACK_HEAD || bb == COMMAND_HEAD){
                             state = READ;
-                            pkt_type = ACK_HEAD;
+                            pkt_type = bb;
                         }
                     }
                 } else{
@@ -559,7 +559,7 @@ void RadioManager::read_loop()/*{{{*/
                         switch (pkt_read_pos){
                             case 0:
                                 length = bb;
-                                length += ID_SIZE + CRC_SIZE;
+                                length += CRC_SIZE;
                                 pkt_read_pos++;
                                 break;
                             case 1:{
