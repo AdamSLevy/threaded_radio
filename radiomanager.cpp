@@ -525,6 +525,7 @@ void RadioManager::read_loop()/*{{{*/
                 cout << "read_buf: " << endl;
                 print_hex((byte*)read_buf,bytes_read);
 
+                size_t last_header_index = 0;
                 for (size_t i = 0; i < in_data.size(); i++){
                     if (state == SEEK){
                         pkt_type = 0;
@@ -532,24 +533,25 @@ void RadioManager::read_loop()/*{{{*/
                         length = 0;
                         pkt_data.clear();
 
-                        size_t nextHeaderIndex_ack     = in_data.find_first_of(ACK_HEAD, i);
-                        size_t nextHeaderIndex_command = in_data.find_first_of(COMMAND_HEAD, i);
+                        size_t next_header_index_ack     = in_data.find_first_of(ACK_HEAD, last_header_index + 1);
+                        size_t next_header_index_command = in_data.find_first_of(COMMAND_HEAD, last_header_index + 1);
 
-                        size_t nextHeaderIndex;
-                        if (nextHeaderIndex_ack != string::npos){
-                            if (nextHeaderIndex_command == string::npos){
-                                nextHeaderIndex = nextHeaderIndex_ack;
+                        size_t next_header_index;
+                        if (next_header_index_ack != string::npos){
+                            if (next_header_index_command == string::npos){
+                                next_header_index = next_header_index_ack;
                             } else{
-                                nextHeaderIndex = std::min(nextHeaderIndex_ack, nextHeaderIndex_command);
+                                next_header_index = min(next_header_index_ack, next_header_index_command);
                             }
                         } else{
-                            nextHeaderIndex = nextHeaderIndex_command;
+                            next_header_index = next_header_index_command;
                         }
 
-                        if (nextHeaderIndex == string::npos){     // There are no headers in in_data
+                        if (next_header_index == string::npos){     // There are no headers in in_data
                             break;
                         } else{
-                            i = nextHeaderIndex;
+                            i = next_header_index;
+                            last_header_index = next_header_index;
                             const byte bb = in_data[i];
                             if (bb == ACK_HEAD || bb == COMMAND_HEAD){
                                 state = READ;
