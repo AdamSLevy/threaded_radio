@@ -533,8 +533,8 @@ void RadioManager::read_loop()/*{{{*/
                         length = 0;
                         pkt_data.clear();
 
-                        size_t next_header_index_ack     = in_data.find_first_of(ACK_HEAD, last_header_index + 1);
-                        size_t next_header_index_command = in_data.find_first_of(COMMAND_HEAD, last_header_index + 1);
+                        size_t next_header_index_ack     = in_data.find_first_of(ACK_HEAD, last_header_index);
+                        size_t next_header_index_command = in_data.find_first_of(COMMAND_HEAD, last_header_index);
 
                         size_t next_header_index;
                         if (next_header_index_ack != string::npos){
@@ -551,7 +551,7 @@ void RadioManager::read_loop()/*{{{*/
                             break;
                         } else{
                             i = next_header_index;
-                            last_header_index = next_header_index;
+                            last_header_index = next_header_index + 1;
                             const byte bb = in_data[i];
                             if (bb == ACK_HEAD || bb == COMMAND_HEAD){
                                 state = READ;
