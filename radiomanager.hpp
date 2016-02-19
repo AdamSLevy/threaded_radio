@@ -218,7 +218,7 @@ private:
     void read_loop();
     thread read_th;
 
-    void verify_crc(string data);
+    bool verify_crc(string data);
     void ack_ack(MsgPktID);
 
     bool is_open;

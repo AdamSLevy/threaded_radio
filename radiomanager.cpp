@@ -572,7 +572,10 @@ void RadioManager::read_loop()/*{{{*/
                                     i += append_data.size() - 1;
                                     pkt_data += append_data;
                                     if (pkt_data.size() >= length){
-                                        verify_crc(pkt_data);
+                                        bool verified = verify_crc(pkt_data);
+                                        if (verified){
+                                            last_header_index = i + 1;
+                                        }
                                         state = SEEK;
                                     }
                                     break;}
@@ -645,11 +648,12 @@ int RadioManager::call_read_select()/*{{{*/
     return ret;
 }/*}}}*/
 
-void RadioManager::verify_crc(string data){/*{{{*/
+bool RadioManager::verify_crc(string data){/*{{{*/
     CRC32 crc;
+    bool verified = false;
 
     if (data.size() < 6){
-        return;
+        return verified;
     }
 
     string received_crc = string(data.c_str() + data.size() - 4, 4);
@@ -663,6 +667,7 @@ void RadioManager::verify_crc(string data){/*{{{*/
     string computed_crc((char *)h,4);
 
     if (computed_crc == received_crc){
+        verified = true;
         cout << "---- ack verified ------" << endl;     // debug
         print_hex((byte*)data.c_str(),data.size());
         m_ack_count++;                  // debug
@@ -765,6 +770,7 @@ void RadioManager::verify_crc(string data){/*{{{*/
         m_bad_crc++;    // debug
         cout << "not verified" << endl; // debug
     }
+    return verified;
 }/*}}}*/
 
 void RadioManager::ack_ack(MsgPktID id){/*{{{*/
