@@ -27,5 +27,10 @@ struct RadioData{
     float spec[2048];
 };
 
+struct SpecSerial{
+    char model[10];
+    char serial[10];
+};
+
 #endif // RADIODATA
 
