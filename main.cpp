@@ -67,6 +67,20 @@ START:
         cout << "Serial setup code: " << errorCode << endl << endl;
     }
 
+    data.lat = 5;
+    data.lon = 6;
+    data.alt = 7;
+    data.course = 8;
+    data.speed = 9;
+    data.num_sats = 35;
+    data.quality = 8;
+    data.hour = 16;
+    data.minute = 20;
+    data.second = 5;
+    data.darkMode = 0;
+    data.exposureTime = 500;
+    data.numExposures = 1;
+
     data.fileNum = 0;
     cout << "file num: "        << (unsigned int)data.fileNum         << endl;
     cout << "lat: "             << (unsigned int)data.lat             << endl;
@@ -83,12 +97,13 @@ START:
     cout << "exposureTime: "    << (unsigned int)data.exposureTime    << endl;
     cout << "numExposures: "    << (unsigned int)data.numExposures    << endl;
 
+
     for(;;){
         for(int i = 0; i < 2048; i++){
             data.spec[i] = i; //dist(gen);
         }
-        data.fileNum++;
         int numBytes = radio.queue_data((byte*)&data,sizeof(RadioData));
+        data.fileNum++;
 
         if(numBytes>0){
             total_bytes += numBytes;
