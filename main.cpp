@@ -100,13 +100,13 @@ START:
 
 
     for(;;){
-        for(int i = 0; i < 2048; i++){
+        for (int i = 0; i < 2048; i++){
             data.spec[i] = i; //dist(gen);
         }
         int numBytes = radio.queue_data((byte*)&data,sizeof(RadioData));
         data.fileNum++;
 
-        if(numBytes>0){
+        if (numBytes>0){
             total_bytes += numBytes;
             //cout << "Sent: " << numBytes << endl;
             //cout << "Total: " << total_bytes << endl;
@@ -124,7 +124,7 @@ START:
             goto START; // im a bad boy, but it works
         }
 
-        if(total_bytes > 0){//8240*1){
+        if (total_bytes >= sizeof(RadioData)*3){
             //cout << "Total Sent: " << total_bytes << endl;
             while(radio.send_in_progress()){sleep(4);};
 
@@ -132,6 +132,10 @@ START:
 
             radio.close_serial();
             return 0;
+        }
+        data.darkMode++;
+        if (data.darkMode > MODE_SHUTTER_CLOSED){
+            data.darkMode = MODE_COLLECT;
         }
         sleep(1);
     }
