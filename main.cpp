@@ -77,9 +77,10 @@ START:
     data.hour = 16;
     data.minute = 20;
     data.second = 5;
-    data.darkMode = 0;
     data.exposureTime = 500;
     data.numExposures = 1;
+    data.darkMode = MODE_COLLECT;
+    
 
     data.fileNum = 0;
     cout << "file num: "        << (unsigned int)data.fileNum         << endl;

@@ -21,7 +21,7 @@ struct RadioData{
     unsigned char hour = 0;
     unsigned char minute = 0;
     unsigned char second = 0;
-    unsigned char darkMode = 0;
+    unsigned char darkMode = MODE_COLLECT;
     char warnCode = 'A';
 
     // spectrometer data
