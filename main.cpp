@@ -120,6 +120,7 @@ START:
             radio.close_serial();
             return 0;
         }
+        sleep(1);
     }
 
 
