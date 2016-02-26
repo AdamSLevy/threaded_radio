@@ -76,9 +76,6 @@ START:
     cout << "course: "          << (unsigned int)data.course          << endl;
     cout << "num_sats: "        << (unsigned int)data.num_sats        << endl;
     cout << "quality: "         << (unsigned int)data.quality         << endl;
-    cout << "year: "            << (unsigned int)data.year            << endl;
-    cout << "month: "           << (unsigned int)data.month           << endl;
-    cout << "day: "             << (unsigned int)data.day             << endl;
     cout << "hour: "            << (unsigned int)data.hour            << endl;
     cout << "min: "             << (unsigned int)data.minute          << endl;
     cout << "sec: "             << (unsigned int)data.second          << endl;
