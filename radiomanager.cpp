@@ -135,11 +135,11 @@ RadioManager::RadioManager(): HEADER(HEADER_HEX),FOOTER(FOOTER_HEX)/*{{{*/
 RadioManager::~RadioManager()/*{{{*/
 {
     close_serial();
-    cout << " num pkts: " << num_pkts << endl;  // debug
-    cout << " num acks received: " << m_ack_count << endl;  // debug
-    cout << " num bad crc : " << m_bad_crc << endl; // debug
-    cout << " num successfully sent : " << m_num_sent << endl; // debug
-    cout << " num resent : " << m_num_resent << endl; // debug
+    //cout << " num pkts: " << num_pkts << endl;  // debug
+    //cout << " num acks received: " << m_ack_count << endl;  // debug
+    //cout << " num bad crc : " << m_bad_crc << endl; // debug
+    //cout << " num successfully sent : " << m_num_sent << endl; // debug
+    //cout << " num resent : " << m_num_resent << endl; // debug
 }/*}}}*/
 
 int RadioManager::open_serial( string port_name )/*{{{*/
@@ -852,11 +852,11 @@ void RadioManager::clear_queued_data()/*{{{*/
 
 bool RadioManager::send_in_progress()/*{{{*/
 {
-    cout << "num to_send: " << to_send.size() << endl;
-    cout << "num to_resend: " << to_resend.size() << endl;
-    cout << "num send_window: " << send_window.size() << endl;
-    cout << "num to_ack: " << to_ack.size() << endl;
-    cout << "num to_ack_ack: " << to_ack_ack.size() << endl;
+    //cout << "num to_send: " << to_send.size() << endl;
+    //cout << "num to_resend: " << to_resend.size() << endl;
+    //cout << "num send_window: " << send_window.size() << endl;
+    //cout << "num to_ack: " << to_ack.size() << endl;
+    //cout << "num to_ack_ack: " << to_ack_ack.size() << endl;
     return !(to_send.empty() && to_resend.empty() && send_window.empty() && to_ack_ack.empty() && to_ack.empty());
 }/*}}}*/
 
