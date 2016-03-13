@@ -481,9 +481,9 @@ void RadioManager::write_loop()/*{{{*/
             }
 
             // debug this timeout
-            //size_t send_time = 1e6 * num_bytes_sent / (115200/9);//+100000;
+            size_t send_time = 1e6 * num_bytes_sent / (115200/9);//+100000;
             //cout << "sleep_time " << send_time << endl;   // debug
-            //usleep(send_time);
+            usleep(send_time);
         }
         send_window.clear();
     }
