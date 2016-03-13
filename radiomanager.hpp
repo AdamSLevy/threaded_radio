@@ -172,6 +172,7 @@ public:
     void clear_queued_data();
 
     bool send_in_progress();
+    size_t queue_size();
 
 private:
     // file descriptors and their mutexes
