@@ -162,6 +162,7 @@ public:
     int open_serial(string port_name);
     int close_serial();
     int queue_data(byte * data, const ulong numBytes);
+    bool stop_sending;
 
     // this will clear all data and stop transmitions but leave the serial port open
     // transmittion will resume the next time queue_data is called

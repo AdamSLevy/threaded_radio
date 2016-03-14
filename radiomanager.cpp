@@ -124,6 +124,7 @@ RadioManager::RadioManager(): HEADER(HEADER_HEX),FOOTER(FOOTER_HEX)/*{{{*/
     m_port_name = DEFAULT_TTY_PORT_NAME;
 
     is_open = false;
+    stop_sending = false;
     m_wfd = -1;
     m_rfd = -1;
     num_pkts = 0;       // debug
@@ -266,7 +267,7 @@ int RadioManager::queue_data(byte * data, const ulong num_bytes)/*{{{*/
     CRC32 crc;
     
     int num_sent = -1;
-    if (!is_open){
+    if (!is_open || stop_sending){
         return num_sent;
     }
 
@@ -722,6 +723,16 @@ void RadioManager::verify_crc(string data){/*{{{*/
 
         ack_ack(id);    // acknowledge the acknowledgement packet
 
+        if (id.msg_id == 0xFF){
+           if (id.pkt_id == 0xF0){
+               stop_sending = true;
+               clear_queued_data();
+           } else if (id.pkt_id == 0xF1){
+               stop_sending = false;
+           }
+           return;
+        }
+
         byte current_msg_id = (byte) data[0];
 
         vector<MsgPktID> ack_id;    // to hold list of acknowledged msg pkt ids
@@ -838,16 +849,10 @@ void RadioManager::clear_queued_data()/*{{{*/
 {
       to_send_mtx.lock();
     to_resend_mtx.lock();
-       to_ack_mtx.lock();
-       to_ack_ack_mtx.lock();
       to_send.clear();
     to_resend.clear();
-       to_ack.clear();
-       to_ack_ack.clear();
       to_send_mtx.unlock();
     to_resend_mtx.unlock();
-       to_ack_mtx.unlock();
-       to_ack_ack_mtx.unlock();
 }/*}}}*/
 
 bool RadioManager::send_in_progress()/*{{{*/
