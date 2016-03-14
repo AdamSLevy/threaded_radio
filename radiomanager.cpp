@@ -392,47 +392,49 @@ void RadioManager::write_loop()/*{{{*/
         to_ack_ack.clear();
         to_ack_ack_mtx.unlock();
 
-        // RESEND packets get priority
-        // Add to_resend Packets to send_window
-        size_t resend_pkts_added = 0;
-        to_resend_mtx.lock();
-        while ((send_window.size() < (NUM_PKTS_PER_ACK + ack_ack_pkts_added))
-                && (resend_pkts_added < to_resend.size())){
-            //MsgPktID id;
-            //id.msg_id = to_resend[resend_pkts_added].data[ID_OFFSET];      // debug
-            //id.pkt_id = to_resend[resend_pkts_added].data[ID_OFFSET+1];    // debug
-            //cout << "\t\tresending msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
-            send_window.push_back(to_resend[resend_pkts_added++]);
-        }
-        if (resend_pkts_added){
-            m_num_resent += resend_pkts_added;                          //debug
-            to_resend.erase(to_resend.begin(),to_resend.begin()+resend_pkts_added);
-        }
-        //cout << "\t\t resend_pkts_added: " << resend_pkts_added << endl;            // debug
-        //cout << "\t\t to_resend size: " << to_resend.size() << endl;                // debug
-        //cout << "\t\t to_send size: " << to_send.size() << endl << endl << endl;    // debug
-        to_resend_mtx.unlock();
+        if (!stop_sending){
+            // RESEND packets get priority
+            // Add to_resend Packets to send_window
+            size_t resend_pkts_added = 0;
+            to_resend_mtx.lock();
+            while ((send_window.size() < (NUM_PKTS_PER_ACK + ack_ack_pkts_added))
+                    && (resend_pkts_added < to_resend.size())){
+                //MsgPktID id;
+                //id.msg_id = to_resend[resend_pkts_added].data[ID_OFFSET];      // debug
+                //id.pkt_id = to_resend[resend_pkts_added].data[ID_OFFSET+1];    // debug
+                //cout << "\t\tresending msg: " << to_hex(id.msg_id) << " pkt: " << to_hex(id.pkt_id) << endl; // debug
+                send_window.push_back(to_resend[resend_pkts_added++]);
+            }
+            if (resend_pkts_added){
+                m_num_resent += resend_pkts_added;                          //debug
+                to_resend.erase(to_resend.begin(),to_resend.begin()+resend_pkts_added);
+            }
+            //cout << "\t\t resend_pkts_added: " << resend_pkts_added << endl;            // debug
+            //cout << "\t\t to_resend size: " << to_resend.size() << endl;                // debug
+            //cout << "\t\t to_send size: " << to_send.size() << endl << endl << endl;    // debug
+            to_resend_mtx.unlock();
 
-        // NEW DATA PKTS
-        // Add to_send Packets to send_window
-        size_t send_pkts_added = 0; 
-        to_send_mtx.lock();
-        while ((send_window.size() < (NUM_PKTS_PER_ACK + ack_ack_pkts_added))
-                && (send_pkts_added < to_send.size())){
-            send_window.push_back(to_send[send_pkts_added++]);
-        }
-        if (send_pkts_added){
-            to_send.erase( to_send.begin(),to_send.begin() + send_pkts_added );
-        }
-        to_send_mtx.unlock();
+            // NEW DATA PKTS
+            // Add to_send Packets to send_window
+            size_t send_pkts_added = 0; 
+            to_send_mtx.lock();
+            while ((send_window.size() < (NUM_PKTS_PER_ACK + ack_ack_pkts_added))
+                    && (send_pkts_added < to_send.size())){
+                send_window.push_back(to_send[send_pkts_added++]);
+            }
+            if (send_pkts_added){
+                to_send.erase( to_send.begin(),to_send.begin() + send_pkts_added );
+            }
+            to_send_mtx.unlock();
 
-        // Add send_window Packets to to_ack, so they will await acknowledgement
-        // Exclude leading ack ack packets
-        to_ack_mtx.lock();
-        for ( size_t i = ack_ack_pkts_added; i < send_window.size(); i++){
-            to_ack.push_back(send_window[i]);
+            // Add send_window Packets to to_ack, so they will await acknowledgement
+            // Exclude leading ack ack packets
+            to_ack_mtx.lock();
+            for ( size_t i = ack_ack_pkts_added; i < send_window.size(); i++){
+                to_ack.push_back(send_window[i]);
+            }
+            to_ack_mtx.unlock();
         }
-        to_ack_mtx.unlock();
 
 
         // Copy the Packet::data to the continuous window_buf
@@ -725,7 +727,6 @@ void RadioManager::verify_crc(string data){/*{{{*/
         if (id.msg_id == 0xFF){
             if (id.pkt_id == 0xF0){
                 stop_sending = true;
-                clear_queued_data();
             } else if (id.pkt_id == 0xF1){
                 stop_sending = false;
             }
