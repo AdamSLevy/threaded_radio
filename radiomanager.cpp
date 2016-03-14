@@ -721,7 +721,6 @@ void RadioManager::verify_crc(string data){/*{{{*/
         id.msg_id = (byte) data[0];
         id.pkt_id = (byte) data[1];
 
-        ack_ack(id);    // acknowledge the acknowledgement packet
 
         if (id.msg_id == 0xFF){
             if (id.pkt_id == 0xF0){
@@ -733,6 +732,8 @@ void RadioManager::verify_crc(string data){/*{{{*/
             ack_ack(id);    // acknowledge the acknowledgement packet
             return;
         }
+
+        ack_ack(id);    // acknowledge the acknowledgement packet
 
         byte current_msg_id = (byte) data[0];
 
