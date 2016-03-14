@@ -101,10 +101,6 @@ typedef unsigned char byte;
 
 #define SELECT_SEC_DELAY  4
 #define SELECT_NSEC_DELAY 0
-//#define r16(e)   r4( r4(e))
-//#define r32(e)   r2(r16(e))
-//#define r64(e)   r2(r32(e))
-//#define r256(e) r16(r16(e))
 
 #define HEADER_INIT 0xFA,r2(0xFF),0xFA
 #define FOOTER_INIT 0xFE,r2(0xFF),0xFE
