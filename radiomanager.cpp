@@ -267,8 +267,12 @@ int RadioManager::queue_data(byte * data, const ulong num_bytes)/*{{{*/
     CRC32 crc;
     
     int num_sent = -1;
-    if (!is_open || stop_sending){
+    if (!is_open){
         return num_sent;
+    }
+
+    if (stop_sending){
+        return 0;
     }
 
     if (msgID == MAX_ID){
