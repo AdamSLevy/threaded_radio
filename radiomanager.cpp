@@ -724,13 +724,14 @@ void RadioManager::verify_crc(string data){/*{{{*/
         ack_ack(id);    // acknowledge the acknowledgement packet
 
         if (id.msg_id == 0xFF){
-           if (id.pkt_id == 0xF0){
-               stop_sending = true;
-               clear_queued_data();
-           } else if (id.pkt_id == 0xF1){
-               stop_sending = false;
-           }
-           return;
+            if (id.pkt_id == 0xF0){
+                stop_sending = true;
+                clear_queued_data();
+            } else if (id.pkt_id == 0xF1){
+                stop_sending = false;
+            }
+            ack_ack(id);    // acknowledge the acknowledgement packet
+            return;
         }
 
         byte current_msg_id = (byte) data[0];
@@ -849,8 +850,14 @@ void RadioManager::clear_queued_data()/*{{{*/
 {
       to_send_mtx.lock();
     to_resend_mtx.lock();
+       to_ack_mtx.lock();
+   to_ack_ack_mtx.lock();
       to_send.clear();
     to_resend.clear();
+       to_ack.clear();
+   to_ack_ack.clear();
+   to_ack_ack_mtx.unlock();
+       to_ack_mtx.unlock();
       to_send_mtx.unlock();
     to_resend_mtx.unlock();
 }/*}}}*/
