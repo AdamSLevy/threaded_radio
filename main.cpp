@@ -108,7 +108,7 @@ START:
 
         if (numBytes>0){
             total_bytes += numBytes;
-            //cout << "Sent: " << numBytes << endl;
+            cout << "Sent: " << numBytes << endl;
             //cout << "Total: " << total_bytes << endl;
             //cout << "\t wait ";
 
