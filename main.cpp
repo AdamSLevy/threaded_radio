@@ -118,13 +118,16 @@ START:
                 //sleep(1);
             }
             //cout << endl << endl;
+        } else if(numBytes == 0){
+           cout << "closed " << endl;
+           sleep(2);
         } else{
             cout << "Failed to send! \n";
             errorCode = radio.close_serial();
             goto START; // im a bad boy, but it works
         }
 
-        if (total_bytes >= sizeof(RadioData)*3){
+        if (total_bytes >= sizeof(RadioData)*10){
             //cout << "Total Sent: " << total_bytes << endl;
             while(radio.send_in_progress()){sleep(4);};
 
