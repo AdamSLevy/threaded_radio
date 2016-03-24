@@ -488,7 +488,7 @@ void RadioManager::write_loop()/*{{{*/
             }
 
             // debug this timeout
-            size_t send_time = 1e6 * num_bytes_sent / (115200/9);//+100000;
+            size_t send_time = 1e6 * num_bytes_sent / (50200/9);//+100000;
             //cout << "sleep_time " << send_time << endl;   // debug
             usleep(send_time);
         }
@@ -836,6 +836,7 @@ void RadioManager::verify_crc(string data){/*{{{*/
 
 void RadioManager::ack_ack(MsgPktID id){/*{{{*/
     Packet ack;
+    //cout << "ack id" << id.msg_id << " " << id.pkt_id << endl;
     ack.data[ID_OFFSET] = id.msg_id;
     ack.data[ID_OFFSET+1] = id.pkt_id;
     CRC32 crc;
